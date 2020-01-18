@@ -18,6 +18,10 @@ import scipy.io
 #CUDA_LAUNCH_BLOCKING=1
 
 
+args = None
+model = None
+
+
 class Net(nn.Module):
     def __init__(self, args=None):
         super(Net, self).__init__()
@@ -686,889 +690,398 @@ def parse_args():
     return parser.parse_args()
 
 
-args = parse_args()
+def main():
+    global args
+    global model
 
-if args.seed is not None:
-    random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.backends.cudnn.deterministic = True
-    print('\n\n****** You have chosen to seed training. This will turn on the CUDNN deterministic setting, and training will be SLOW! ******\n\n')
-else:
-    torch.backends.cudnn.benchmark = True
+    args = parse_args()
 
-if args.gpu is not None:
-    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
-
-np.set_printoptions(precision=4, linewidth=120, suppress=True)
-
-train_inputs, train_labels, test_inputs, test_labels = utils.load_cifar(args)
-
-num_train_batches = 50000 // args.batch_size
-num_test_batches = 10000 // args.batch_size
-
-if args.LR_1 == 0:
-    args.LR_1 = args.LR
-if args.LR_2 == 0:
-    args.LR_2 = args.LR
-if args.LR_3 == 0:
-    args.LR_3 = args.LR
-if args.LR_4 == 0:
-    args.LR_4 = args.LR
-
-currents = {}
-if args.var_name == 'current':
-    current_vars = [1, 3, 5, 10, 20, 50, 100]
-else:
-    current_vars = [args.current]
-
-for current in current_vars:
-    print('\n\n****************** Current {} ********************\n\n'.format(current))
-    currents[current] = []
-    args.current = current
-
-    if args.current > 0:
-        args.current1 = args.current2 = args.current3 = args.current4 = args.current
-
-    if args.split:
-        args.test_current = args.current
-        args.train_current = 0
-        #args.train_current = current * 0.8
-        args.current1 = args.current2 = args.current3 = args.current4 = args.train_current
-
-    args.layer_currents = [args.current1, args.current2, args.current3, args.current4]
-
-    if args.distort_w_test:
-        if args.current1 > 0:
-            margin1 = args.w_scale * 0.1 / args.current1
-            margin2 = args.w_scale * 0.1 / args.current2
-            margin3 = args.w_scale * 0.1 / args.current3
-            margin4 = args.w_scale * 0.1 / args.current4
-        else:
-            margin1 = args.w_scale * 0.1
-            margin2 = args.w_scale * 0.1
-            margin3 = args.w_scale * 0.1
-            margin4 = args.w_scale * 0.1
-
-    results = {}
-    results_dist = {}
-    power_results = {}
-    noise_results = {}
-    act_sparsity_results = {}
-    w_sparsity_results = {}
-
-    if args.var_name == 'w_max1':
-        var_list = [0.05, 0.1, 0.3, 0.5, 1]
-        #var_list = [0, 2, 4, 8]
-        var_list = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1]
-    elif args.var_name == 'act_max':#'act_max' in args.var_name:
-        #var_list = [0.8, 1.2, 1.5, 2, 2.5, 3, 5, 10, 0]
-        var_list = [0, 0.2, 1, 5, 20]
-        var_list = [0.25, 1, 2, 4, 10, 0]
-    elif args.var_name == 'act_max1':#'act_max' in args.var_name:
-        #var_list = [0.8, 1.2, 1.5, 2, 2.5, 3, 5, 10, 0]
-        var_list = [0, 0.2, 1, 5, 20]
-        var_list = [0.5, 1, 1.5, 2, 2.5, 3, 4, 5]
-    elif args.var_name == 'act_max2':#'act_max' in args.var_name:
-        #var_list = [0.8, 1.2, 1.5, 2, 2.5, 3, 5, 10, 0]
-        var_list = [0, 0.2, 1, 5, 20]
-        var_list = [0.5, 1, 2, 3, 4, 5, 10]
-    elif args.var_name == 'act_max3':#'act_max' in args.var_name:
-        #var_list = [0.8, 1.2, 1.5, 2, 2.5, 3, 5, 10, 0]
-        var_list = [0, 0.2, 1, 5, 20]
-        var_list = [0.5, 1, 2, 3, 4, 5, 10]
-    elif args.var_name == 'LR':
-        #var_list = [0.0001, 0.0002, 0.0003, 0.0005, 0.001, 0.005, 0.01, 0.02, 0.03, 0.05, 0.1]
-        #var_list = [0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.003, 0.005, 0.01, 0.02]
-        var_list = [0.01, 0.015, 0.02, 0.025, 0.03, 0.035]
-        var_list = [0.001, 0.002, 0.005, 0.01, 0.02, 0.04]
-        var_list = [0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1]
-        var_list = [0.5, 0.6, 0.7, 0.8, 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 7, 10]
-        var_list = [0.0001, 0.0002, 0.0003, 0.0005, 0.001, 0.002, 0.003, 0.004, 0.006, 0.008, 0.01]
-    elif args.var_name == 'L2_act_max':
-        var_list = [0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.03, 0.05]
-    elif args.var_name == 'uniform_ind':
-        #var_list = [0.08, 0.09, 0.1, 0.11, 0.12, 0.13, 0.14, 0.15]
-        var_list = [x/current for x in [0.12, 0.14, 0.16]]
-    elif args.var_name == 'uniform_dep':
-        var_list = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]  #0.5, 0.6, and 1.5-3.0
-    elif args.var_name == 'normal_ind':
-        #var_list = [0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1]
-        var_list = [x/current for x in [0.05, 0.07, 0.09]]
-    elif args.var_name == 'normal_dep':
-        #var_list = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
-        var_list = [x/current for x in [0.3, 0.4, 0.5]]
-    elif args.var_name == 'L2_1':
-        var_list = [0.0, 0.0002, 0.0005, 0.001, 0.002, 0.003, 0.005]
-    elif args.var_name == 'L2':
-        var_list = [0.00005, 0.0001, 0.0002, 0.0003, 0.0005, 0.001]
-        var_list = [0, 0.0001, 0.0002, 0.0003, 0.0004, 0.0005, 0.0006, 0.0008, 0.001, 0.0012, 0.0015, 0.002]
-        var_list = [0, 0.00005, 0.0001, 0.0002, 0.0003, 0.0004, 0.0005, 0.0006, 0.0007, 0.0008, 0.001]
-        var_list = [0.0005, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.008, 0.01, 0.02, 0.03, 0.05]
-        var_list = [0.5, 0.6, 0.7, 0.8, 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 7, 10]
-        var_list = [0, 0.02, 0.03, 0.05, 0.07, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4]
-        var_list = [0, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4]
-    elif args.var_name == 'L1':
-        var_list = [0, 1e-7, 2e-7, 5e-7, 1e-6, 2e-6, 5e-6, 1e-5]#, 3e-5, 2e-5, 5e-5, 0.0001]
-        #var_list = [1e-5, 2e-5, 5e-5, 0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.03, 0.05, 0.07, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.7, 1]
-        var_list = [2e-6, 4e-6, 6e-6, 8e-6, 1e-5, 2e-5, 3e-5]
-    elif args.var_name == 'L2_2':
-        var_list = [0.0, 0.00001, 0.00002, 0.00003, 0.00005, 0.0001]#, 0.0002, 0.0003, 0.0005, 0.001]
-    elif args.var_name == 'L3':
-        #var_list = [0.1, 0.2, 0.5, 1, 2, 3, 5]  # currents 1,3,5,10,20,50,100:  30, 20, 10, 1, 0.2, 0.05, 0.01
-        #var_list = [x/args.test_current for x in [10, 20, 50]]
-        var_list = [0, 0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 50]
-        var_list = [0, 0.001, 0.002, 0.005, 0.01, 0.02, 0.03, 0.05, 0.1, 0.2, 0.5]
-        var_list = [0.0005, 0.001, 0.002, 0.003, 0.005, 0.007, 0.01, 0.015, 0.02]
-        #var_list = [0.02, 0.025, 0.03, 0.035, 0.04, 0.05, 0.06, 0.07, 0.08]
-        var_list = [0.001, 0.0025, 0.005, 0.0075, 0.01, 0.015, 0.02, 0.025, 0.03]
-        var_list = [0, 0.0005, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.01]
-        var_list = [5e-5, 1e-4, 2e-4, 5e-4, 1e-3, 2e-3, 5e-3]#0.0005, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.01]
-        var_list = [0, 0.0005, 0.001, 0.002, 0.003, 0.005, 0.007, 0.01, 0.02, 0.03, 0.04, 0.06, 0.08, 0.1, 0.2, 0.3, 0.5, 1]
-    elif args.var_name == 'L3_new':
-        var_list = [0, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 1]#1, 2, 3, 5, 10, 20, 30]
-    elif args.var_name == 'L3_act':
-        #var_list = [500000, 1000000, 2000000, 4000000, 10000000, 20000000]
-        #var_list = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20]
-        var_list = [0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.5, 1, 2]
-    elif args.var_name == 'L4':
-        var_list = [0.00002, 0.00005, 0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5]
-    elif args.var_name == 'momentum':
-        var_list = [0., 0.5, 0.7, 0.8, 0.85, 0.9, 0.95, 0.97, 0.99]
-    elif args.var_name == 'grad_clip':
-        #var_list = [0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2, 5, 0]
-        var_list = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2, 5, 0]
-        var_list = [0.005, 0.05, 0.5, 2, 0]
-    elif args.var_name == 'dropout':
-        var_list = [0, 0.05, 0.1, 0.15, 0.2, 0.25]
-        var_list = [0, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5]
-    elif args.var_name == 'width':
-        var_list = [1, 2, 4]
-    elif args.var_name == 'noise':
-        var_list = [0, 0.02, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5]
-    elif args.var_name == 'n_w':
-        var_list = [0, 0.02, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5]
-        var_list = [0, 0.02, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
-    elif args.var_name == 'selected_weights':
-        var_list = [0, 1, 2, 3, 5, 10, 20, 30]
-        var_list = [2, 5, 10]
-        acc_lists = []
-    elif args.var_name == 'L2_w_max':
-        var_list = [0.1]    #0.1 works fine for current=10 and init_w_max=0.2, no L2, and no act_max: w_min=-0.16, w_max=0.18, Acc 78.72 (epoch 225), power 3.45, noise 0.04 (0.02, 0.03, 0.04, 0.08)
+    if args.seed is not None:
+        random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        torch.backends.cudnn.deterministic = True
+        print('\n\n****** You have chosen to seed training. This will turn on the CUDNN deterministic setting, and training will be SLOW! ******\n\n')
     else:
-        var_list = [' ']
+        torch.backends.cudnn.benchmark = True
 
-    for var in var_list:
-        if args.var_name != '':
-            print('\n\n********** Setting {} to {} **********\n\n'.format(args.var_name, var))
-            setattr(args, args.var_name, var)
+    if args.gpu is not None:
+        os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
 
-        if args.q_a > 0:
-            args.q_a1 = args.q_a2 = args.q_a3 = args.q_a4 = args.q_a
-        if args.L2 > 0:
-            #args.L2_1 = args.L2_2 = args.L2_3 = args.L2_4 = args.L2
-            #args.L2_1 = args.L2_2 = args.L2_3 = args.L2_4 = args.L2 * math.sqrt(args.width)
-            if args.q_a2 == 1:
-                args.L2_1 = args.L2_2 = args.L2_3 = args.L2_4 = args.L2 * args.width
+    np.set_printoptions(precision=4, linewidth=120, suppress=True)
+
+    train_inputs, train_labels, test_inputs, test_labels = utils.load_cifar(args)
+
+    num_train_batches = 50000 // args.batch_size
+    num_test_batches = 10000 // args.batch_size
+
+    if args.LR_1 == 0:
+        args.LR_1 = args.LR
+    if args.LR_2 == 0:
+        args.LR_2 = args.LR
+    if args.LR_3 == 0:
+        args.LR_3 = args.LR
+    if args.LR_4 == 0:
+        args.LR_4 = args.LR
+
+    currents = {}
+    if args.var_name == 'current':
+        current_vars = [1, 3, 5, 10, 20, 50, 100]
+    else:
+        current_vars = [args.current]
+
+    for current in current_vars:
+        print('\n\n****************** Current {} ********************\n\n'.format(current))
+        currents[current] = []
+        args.current = current
+
+        if args.current > 0:
+            args.current1 = args.current2 = args.current3 = args.current4 = args.current
+
+        if args.split:
+            args.test_current = args.current
+            args.train_current = 0
+            #args.train_current = current * 0.8
+            args.current1 = args.current2 = args.current3 = args.current4 = args.train_current
+
+        args.layer_currents = [args.current1, args.current2, args.current3, args.current4]
+
+        if args.distort_w_test:
+            if args.current1 > 0:
+                margin1 = args.w_scale * 0.1 / args.current1
+                margin2 = args.w_scale * 0.1 / args.current2
+                margin3 = args.w_scale * 0.1 / args.current3
+                margin4 = args.w_scale * 0.1 / args.current4
             else:
-                args.L2_1 = args.L2_2 = args.L2_3 = args.L2_4 = args.L2
-            print('\n\nSetting L2 in all layers to {}\n\n'.format(args.L2_1))
+                margin1 = args.w_scale * 0.1
+                margin2 = args.w_scale * 0.1
+                margin3 = args.w_scale * 0.1
+                margin4 = args.w_scale * 0.1
 
-        if args.L1 > 0:
-            args.L1_1 = args.L1_2 = args.L1_3 = args.L1_4 = args.L1
+        results = {}
+        results_dist = {}
+        power_results = {}
+        noise_results = {}
+        act_sparsity_results = {}
+        w_sparsity_results = {}
 
-        if args.dropout > 0 and args.var_name != 'dropout':
-            #pass
-            #args.dropout = 0.1 * args.width
-            '''
-            if args.q_a2 == 0:
-                args.dropout = args.width * 4 / 40.
-            else:
-                args.dropout = args.width * args.q_a2 / 40.
-            '''
-            print('\n\nSetting dropout in fc layers to {}\n\n'.format(args.dropout))
-
-
-        if args.act_max > 0:
-            print('\n\nSetting act clipping in all layers to {}\n\n'.format(args.act_max))
-            args.act_max1 = args.act_max2 = args.act_max3 = args.act_max
-
-        if args.w_max > 0:
-            args.w_max1 = args.w_max2 = args.w_max3 = args.w_max4 = args.w_max
-
-        if args.n_w > 0:
-            print('\n\nSetting weight noise in all layers to {}\n\n'.format(int(args.n_w*100)))
-            args.n_w1 = args.n_w2 = args.n_w3 = args.n_w4 = args.n_w
-
-        if args.q_w > 0:
-            print('\n\nQuantizing weights in all layers to {} bits\n\n'.format(int(args.q_w)))
-            args.q_w1 = args.q_w2 = args.q_w3 = args.q_w4 = args.q_w
-
-        if args.var_name == "LR":
-            args.LR_1 = args.LR_2 = args.LR_3 = args.LR_4 = args.LR
-
-        results[var] = []
-        results_dist[var] = []
-        te_acc_dists = []
-        power_results[var] = []
-        noise_results[var] = []
-        act_sparsity_results[var] = []
-        w_sparsity_results[var] = []
-        best_accuracies = []
-        best_accuracies_dist = []
-        best_powers = []
-        best_noises = []
-        best_act_sparsities = []
-        best_w_sparsities = []
-        te_acc_dist_string = ''
-        avg_te_acc_dist = 0
-        create_dir = True
-
-        if args.var_name != '':
-            tag = args.tag + args.var_name + '-' + str(var) + '_'
+        if args.var_name == 'w_max1':
+            var_list = [0.05, 0.1, 0.3, 0.5, 1]
+            #var_list = [0, 2, 4, 8]
+            var_list = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1]
+        elif args.var_name == 'act_max':#'act_max' in args.var_name:
+            #var_list = [0.8, 1.2, 1.5, 2, 2.5, 3, 5, 10, 0]
+            var_list = [0, 0.2, 1, 5, 20]
+            var_list = [0.25, 1, 2, 4, 10, 0]
+        elif args.var_name == 'act_max1':#'act_max' in args.var_name:
+            #var_list = [0.8, 1.2, 1.5, 2, 2.5, 3, 5, 10, 0]
+            var_list = [0, 0.2, 1, 5, 20]
+            var_list = [0.5, 1, 1.5, 2, 2.5, 3, 4, 5]
+        elif args.var_name == 'act_max2':#'act_max' in args.var_name:
+            #var_list = [0.8, 1.2, 1.5, 2, 2.5, 3, 5, 10, 0]
+            var_list = [0, 0.2, 1, 5, 20]
+            var_list = [0.5, 1, 2, 3, 4, 5, 10]
+        elif args.var_name == 'act_max3':#'act_max' in args.var_name:
+            #var_list = [0.8, 1.2, 1.5, 2, 2.5, 3, 5, 10, 0]
+            var_list = [0, 0.2, 1, 5, 20]
+            var_list = [0.5, 1, 2, 3, 4, 5, 10]
+        elif args.var_name == 'LR':
+            #var_list = [0.0001, 0.0002, 0.0003, 0.0005, 0.001, 0.005, 0.01, 0.02, 0.03, 0.05, 0.1]
+            #var_list = [0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.003, 0.005, 0.01, 0.02]
+            var_list = [0.01, 0.015, 0.02, 0.025, 0.03, 0.035]
+            var_list = [0.001, 0.002, 0.005, 0.01, 0.02, 0.04]
+            var_list = [0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1]
+            var_list = [0.5, 0.6, 0.7, 0.8, 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 7, 10]
+            var_list = [0.0001, 0.0002, 0.0003, 0.0005, 0.001, 0.002, 0.003, 0.004, 0.006, 0.008, 0.01]
+        elif args.var_name == 'L2_act_max':
+            var_list = [0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.03, 0.05]
+        elif args.var_name == 'uniform_ind':
+            #var_list = [0.08, 0.09, 0.1, 0.11, 0.12, 0.13, 0.14, 0.15]
+            var_list = [x/current for x in [0.12, 0.14, 0.16]]
+        elif args.var_name == 'uniform_dep':
+            var_list = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]  #0.5, 0.6, and 1.5-3.0
+        elif args.var_name == 'normal_ind':
+            #var_list = [0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1]
+            var_list = [x/current for x in [0.05, 0.07, 0.09]]
+        elif args.var_name == 'normal_dep':
+            #var_list = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+            var_list = [x/current for x in [0.3, 0.4, 0.5]]
+        elif args.var_name == 'L2_1':
+            var_list = [0.0, 0.0002, 0.0005, 0.001, 0.002, 0.003, 0.005]
+        elif args.var_name == 'L2':
+            var_list = [0.00005, 0.0001, 0.0002, 0.0003, 0.0005, 0.001]
+            var_list = [0, 0.0001, 0.0002, 0.0003, 0.0004, 0.0005, 0.0006, 0.0008, 0.001, 0.0012, 0.0015, 0.002]
+            var_list = [0, 0.00005, 0.0001, 0.0002, 0.0003, 0.0004, 0.0005, 0.0006, 0.0007, 0.0008, 0.001]
+            var_list = [0.0005, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.008, 0.01, 0.02, 0.03, 0.05]
+            var_list = [0.5, 0.6, 0.7, 0.8, 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 7, 10]
+            var_list = [0, 0.02, 0.03, 0.05, 0.07, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4]
+            var_list = [0, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4]
+        elif args.var_name == 'L1':
+            var_list = [0, 1e-7, 2e-7, 5e-7, 1e-6, 2e-6, 5e-6, 1e-5]#, 3e-5, 2e-5, 5e-5, 0.0001]
+            #var_list = [1e-5, 2e-5, 5e-5, 0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.03, 0.05, 0.07, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.7, 1]
+            var_list = [2e-6, 4e-6, 6e-6, 8e-6, 1e-5, 2e-5, 3e-5]
+        elif args.var_name == 'L2_2':
+            var_list = [0.0, 0.00001, 0.00002, 0.00003, 0.00005, 0.0001]#, 0.0002, 0.0003, 0.0005, 0.001]
+        elif args.var_name == 'L3':
+            #var_list = [0.1, 0.2, 0.5, 1, 2, 3, 5]  # currents 1,3,5,10,20,50,100:  30, 20, 10, 1, 0.2, 0.05, 0.01
+            #var_list = [x/args.test_current for x in [10, 20, 50]]
+            var_list = [0, 0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 50]
+            var_list = [0, 0.001, 0.002, 0.005, 0.01, 0.02, 0.03, 0.05, 0.1, 0.2, 0.5]
+            var_list = [0.0005, 0.001, 0.002, 0.003, 0.005, 0.007, 0.01, 0.015, 0.02]
+            #var_list = [0.02, 0.025, 0.03, 0.035, 0.04, 0.05, 0.06, 0.07, 0.08]
+            var_list = [0.001, 0.0025, 0.005, 0.0075, 0.01, 0.015, 0.02, 0.025, 0.03]
+            var_list = [0, 0.0005, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.01]
+            var_list = [5e-5, 1e-4, 2e-4, 5e-4, 1e-3, 2e-3, 5e-3]#0.0005, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.01]
+            var_list = [0, 0.0005, 0.001, 0.002, 0.003, 0.005, 0.007, 0.01, 0.02, 0.03, 0.04, 0.06, 0.08, 0.1, 0.2, 0.3, 0.5, 1]
+        elif args.var_name == 'L3_new':
+            var_list = [0, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 1]#1, 2, 3, 5, 10, 20, 30]
+        elif args.var_name == 'L3_act':
+            #var_list = [500000, 1000000, 2000000, 4000000, 10000000, 20000000]
+            #var_list = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20]
+            var_list = [0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.5, 1, 2]
+        elif args.var_name == 'L4':
+            var_list = [0.00002, 0.00005, 0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5]
+        elif args.var_name == 'momentum':
+            var_list = [0., 0.5, 0.7, 0.8, 0.85, 0.9, 0.95, 0.97, 0.99]
+        elif args.var_name == 'grad_clip':
+            #var_list = [0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2, 5, 0]
+            var_list = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2, 5, 0]
+            var_list = [0.005, 0.05, 0.5, 2, 0]
+        elif args.var_name == 'dropout':
+            var_list = [0, 0.05, 0.1, 0.15, 0.2, 0.25]
+            var_list = [0, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5]
+        elif args.var_name == 'width':
+            var_list = [1, 2, 4]
+        elif args.var_name == 'noise':
+            var_list = [0, 0.02, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5]
+        elif args.var_name == 'n_w':
+            var_list = [0, 0.02, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5]
+            var_list = [0, 0.02, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
+        elif args.var_name == 'selected_weights':
+            var_list = [0, 1, 2, 3, 5, 10, 20, 30]
+            var_list = [2, 5, 10]
+            acc_lists = []
+        elif args.var_name == 'L2_w_max':
+            var_list = [0.1]    #0.1 works fine for current=10 and init_w_max=0.2, no L2, and no act_max: w_min=-0.16, w_max=0.18, Acc 78.72 (epoch 225), power 3.45, noise 0.04 (0.02, 0.03, 0.04, 0.08)
         else:
-            tag = args.tag
+            var_list = [' ']
 
-        args.checkpoint_dir = os.path.join('results/', tag + 'current-' + str(args.current1) + '-' + str(args.current2) + '-' + str(args.current3) + '-' + str(args.current4) +
-            '_L3-' + str(args.L3) + '_L3_act-' + str(args.L3_act) + '_L2-' + str(args.L2_1) + '-' + str(args.L2_2) + '-' + str(args.L2_3) + '-' + str(args.L2_4) +
-            '_actmax-' + str(args.act_max1) + '-' + str(args.act_max2) + '-' + str(args.act_max3) +
-            '_w_max1-' + str(args.w_max1) + '-' + str(args.w_max2) + '-' + str(args.w_max3) + '-' + str(args.w_max4) + '_bn-' + str(args.batchnorm) + '_LR-' + str(args.LR) + '_' +
-            'grad_clip-' + str(args.grad_clip) + '_' +
-            datetime.now().strftime('%Y-%m-%d_%H-%M-%S/'))
+        for var in var_list:
+            if args.var_name != '':
+                print('\n\n********** Setting {} to {} **********\n\n'.format(args.var_name, var))
+                setattr(args, args.var_name, var)
 
-        for s in range(args.num_sims):
-
-            best_accuracy = 0
-            best_accuracy_dist = 0
-            best_epoch = 0
-            best_power = 0
-            best_nsr = 0
-            best_input_sparsity = 0
-            avg_w_sparsity = 0
-            best_w_sparsity = 0
-            init_epoch = 0
-            te_acc = 0
-            best_power_string = ''
-            best_noise_string = ''
-            best_input_sparsity_string = ''
-            best_w_sparsity_string = ''
-            w_input_sparsity_string = ''
-            input_sparsity_string = ''
-            noise_string = ''
-            power_string = ''
-            saved = False
-
-            if args.resume is None:
-
-                model = Net(args=args)
-                utils.init_model(model, args, s)
-                model = model.cuda() #do this before constructing optimizer!!
-                if args.fp16:
-                    model = model.half()
-                    if args.keep_bn_fp32:
-                        for layer in model.modules():
-                            if isinstance(layer, nn.BatchNorm2d) or isinstance(layer, nn.BatchNorm1d):
-                                layer.float()
-
-                if args.train_w_max:
-                    print('\n\nSetting w_min1 to {:.2f} and w_max1 to {:.2f}\n\n'.format(model.w_min1.item(), model.w_max1.item()))
-
-                if args.train_w_max:
-                    w_max_values = []
-                    w_min_values = []
-                if args.train_act_max:
-                    act_max1_values = []
-                    act_max2_values = []
-                    act_max3_values = []
-
-            else:
-                print('\n\nLoading model from saved checkpoint at\n{}\n\n'.format(args.resume))
-                args.checkpoint_dir = '/'.join(args.resume.split('/')[:-1]) + '/'
-                model = Net(args=args)
-                model = model.cuda()
-
-                saved_model = torch.load(args.resume)  #ignore unnecessary parameters
-
-                for saved_name, saved_param in saved_model.items():
-                    if args.debug:
-                        print(saved_name)
-                    for name, param in model.named_parameters():
-                        if name == saved_name:
-                            if args.debug:
-                                print('\tmatched, copying...')
-                            param.data = saved_param.data
-                    if 'running_min' in saved_name or 'running_max' in saved_name:
-                        continue
-                    elif 'running' in saved_name and args.track_running_stats:  #batchnorm stats are not in named_parameters
-                        if args.debug:
-                            print('\tmatched, copying...')
-                        m = model.state_dict()
-                        m.update({saved_name: saved_param})
-                        model.load_state_dict(m)
-
-                #model.load_state_dict(torch.load(args.resume))
-                if args.distort_w_test and args.var_name != '':
-                    pass
+            if args.q_a > 0:
+                args.q_a1 = args.q_a2 = args.q_a3 = args.q_a4 = args.q_a
+            if args.L2 > 0:
+                #args.L2_1 = args.L2_2 = args.L2_3 = args.L2_4 = args.L2
+                #args.L2_1 = args.L2_2 = args.L2_3 = args.L2_4 = args.L2 * math.sqrt(args.width)
+                if args.q_a2 == 1:
+                    args.L2_1 = args.L2_2 = args.L2_3 = args.L2_4 = args.L2 * args.width
                 else:
-                    utils.print_model(model, args, full=args.debug)
-
-                if args.fp16:
-                    model = model.half()
-                    if args.keep_bn_fp32:
-                        for layer in model.modules():
-                            if isinstance(layer, nn.BatchNorm2d) or isinstance(layer, nn.BatchNorm1d):
-                                layer.float()
-
-                if args.w_max > 0:
-                    for n, p in model.named_parameters():
-                        if ('conv' in n or 'fc' in n or 'linear' in n) and 'weight' in n:
-                            # print(n, p.shape)
-                            p.data.clamp_(-args.w_max, args.w_max)
-
-                if args.merge_bn:
-                    merge_batchnorm(model, args)
-
-                if args.distort_w_test and args.var_name != '':
-                    if args.scale_weights > 0:
-                        noise_levels = [1, 0.5, 0.1, 0.01, 0.98, 0.96, 0.94, 0.92, 0.9, 0.88, 0.86, 0.84, 0.82, 0.8]
-                    else:
-                        noise_levels = [0.02, 0.04, 0.06, 0.08, 0.1, 0.12]
-                        #noise_levels = [0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15, 0.2, 0.3]
-                        noise_levels = [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
-                    """
-                    if args.selection_criteria is None:
-                        for args.selection_criteria in ['weight_magnitude', 'grad_magnitude', 'combined']:
-                            print('\n\n\n\n************************* Selection Criteria', args.selection_criteria, ' ***********************\n\n\n\n')
-                            accs = test_distortion(model, args, val_loader=(test_inputs, test_labels), mode='weights', vars=noise_levels)
-                        args.selection_criteria = None
-                    else:
-                        accs = test_distortion(model, args, val_loader=(test_inputs, test_labels), mode='weights', vars=noise_levels)
-                    """
-                    accs = test_distortion(model, args, val_loader=(test_inputs, test_labels), mode='weights', vars=noise_levels)
-                    print('\n\n{:>2d}% selected weights: {}'.format(int(var), accs))
-                    acc_lists.append(accs)
-                    if var == var_list[-1]:
-                        print('\n\nNoise levels (%):', noise_levels, '\n')
-                        for v, accs in zip(var_list, acc_lists):
-                            print('sel_{:02d}_scale_{:d} = {}'.format(int(v), int(args.selected_weights_noise_scale * 100), accs))
-                        print('\n\n')
-                        raise(SystemExit)
-                    break
-
-                model.eval()
-
-                model_fname = args.resume.split('/')[-1]
-                init_epoch = int(model_fname.split('_')[2])
-                init_acc = model_fname.split('_')[-1][:-4]
-                print('\n\nCurrents:', args.current1, args.current2, args.current3, args.current4)
-
-                model.power = [[] for _ in range(args.num_layers)]  #[[]]*num_layers won't work!
-                model.nsr = [[] for _ in range(args.num_layers)]
-                model.input_sparsity = [[] for _ in range(args.num_layers)]
-                w_sparsity = []
-                te_accs = []
-
-                for i in range(10000 // args.batch_size):
-                    input = test_inputs[i * args.batch_size:(i + 1) * args.batch_size]
-                    label = test_labels[i * args.batch_size:(i + 1) * args.batch_size]
-                    output = model(input, init_epoch, i, acc=float(init_acc))
-                    pred = output.data.max(1)[1]
-                    te_acc = pred.eq(label.data).cpu().sum().numpy() * 100.0 / args.batch_size
-                    te_accs.append(te_acc)
-
-                if args.print_stats:
-                    p = []
-                    input_sp = []
-                    nsr = []
-                    for ind in range(args.num_layers):
-                        p.append(np.nanmean(model.power[ind]))
-                        input_sp.append(np.nanmean(model.input_sparsity[ind]))
-                        nsr.append(np.nanmean(model.nsr[ind]))
-
-                    avg_input_sparsity = np.nanmean(input_sp)
-                    input_sparsity_string = '  act spars {:.2f} ({:.2f} {:.2f} {:.2f} {:.2f})'.format(avg_input_sparsity, *input_sp)
-                    avg_nsr = np.nanmean(nsr)
-                    noise_string = '  avg noise {:.3f} ({:.2f} {:.2f} {:.2f} {:.2f})'.format(avg_nsr, *nsr)
-                    total_power = np.nansum(p)
-                    power_string = '  Power {:.2f}mW ({:.2f} {:.2f} {:.2f} {:.2f})'.format(total_power, *p)
-
-                te_acc = np.mean(te_accs, dtype=np.float64)
-
-                print('\n\nRestored Model Accuracy (epoch {:d}): {:.2f}{}{}{}\n\n'.format(init_epoch, te_acc, power_string, noise_string, input_sparsity_string))
-                if not args.distort_w_test and args.q_w == 0:
-                    raise(SystemExit)
-                best_accuracy = te_acc
-                best_epoch = init_epoch
-                create_dir = False
-                init_epoch += 1
-
-                if args.print_clip:
-                    np.set_printoptions(precision=8, threshold=100000)
-                    w1 = model.conv1.weight.detach().cpu().numpy().flatten()
-                    print(w1[:100])
-                    freqs, vals = np.histogram(w1, bins=100)
-                    print('\n', freqs, '\n', vals, '\n')
-
-                    pos_w = len(w1[w1 > 0.99*args.w_max1])
-                    neg_w = len(w1[w1 < -0.99*args.w_max1])
-                    total_w = pos_w + neg_w
-                    print('\npos saturated weghts: ', pos_w)
-                    print('\nneg saturated weghts: ', neg_w)
-                    print('\ntotal saturated:      ', total_w)
-                    print('\ntotal weights:        ', len(w1))
-                    fraction = 100. * total_w // len(w1)
-                    print('\n\nFraction of clipped first layer weights: {:.2f}%\n\n'.format(fraction))
-
-                if args.distort_w_test:
-                    noise_levels = [0.02, 0.04, 0.06, 0.08, 0.1, 0.12]
-                    #noise_levels = [0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15, 0.2, 0.3]
-                    noise_levels = [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
-                    """
-                    if args.selection_criteria is None:
-                        for args.selection_criteria in ['weight_magnitude', 'grad_magnitude', 'combined']:
-                            print('\n\n\n\n************************* Selection Criteria', args.selection_criteria, ' ***********************\n\n\n\n')
-                            test_distortion(model, args, val_loader=(test_inputs, test_labels), mode='weights', vars=noise_levels)
-                    else:
-                        test_distortion(model, args, val_loader=(test_inputs, test_labels), mode='weights', vars=noise_levels)
-                    raise (SystemExit)
-                    """
-                    test_distortion(model, args, val_loader=(test_inputs, test_labels), mode='weights', vars=noise_levels)
-
-            if s == 0:
-                utils.print_model(model, args, full=args.debug)
-
-            param_groups = [
-                {'params': model.conv1.parameters(), 'weight_decay': args.L2_1, 'lr': args.LR_1},
-                {'params': model.conv2.parameters(), 'weight_decay': args.L2_2, 'lr': args.LR_2},
-                {'params': model.linear1.parameters(), 'weight_decay': args.L2_3, 'lr': args.LR_3},
-                {'params': model.linear2.parameters(), 'weight_decay': args.L2_4, 'lr': args.LR_4}]
-
-            if args.train_act_max:
-                param_groups = param_groups + [
-                    {'params': model.act_max1, 'weight_decay': 0, 'lr': args.LR_act_max},
-                    {'params': model.act_max2, 'weight_decay': 0, 'lr': args.LR_act_max},
-                    {'params': model.act_max3, 'weight_decay': 0, 'lr': args.LR_act_max}]
-
-            if args.train_w_max:
-                param_groups = param_groups + [
-                    {'params': model.w_min1, 'weight_decay': 0, 'lr': args.LR_w_max},
-                    {'params': model.w_max1, 'weight_decay': 0, 'lr': args.LR_w_max}]
-
-            if args.batchnorm:
-                param_groups = param_groups + [
-                    {'params': model.bn1.parameters(), 'weight_decay': args.L2_bn},
-                    {'params': model.bn2.parameters(), 'weight_decay': args.L2_bn}]
-                if args.bn3:
-                    param_groups = param_groups + [
-                        {'params': model.bn3.parameters(), 'weight_decay': args.L2_bn}]
-                if args.bn4:
-                    param_groups = param_groups + [
-                        {'params': model.bn4.parameters(), 'weight_decay': args.L2_bn}]
-
-
-            if args.optim == 'SGD':
-                optimizer = torch.optim.SGD(param_groups, lr=args.LR, momentum=args.momentum, nesterov=args.nesterov)
-            elif args.optim == 'Adam':
-                optimizer = torch.optim.Adam(param_groups, lr=args.LR, amsgrad=args.amsgrad)
-            elif args.optim == 'AdamW':
-                optimizer = torch.optim.AdamW(param_groups, lr=args.LR, amsgrad=args.amsgrad)
-                if s == 0:
-                    print('\n\n*********** Using AdamW **********\n')
-                    for param_group in optimizer.param_groups:
-                        print('param_group weight decay {} LR {}'.format(param_group["weight_decay"], param_group["lr"]))
-                    print('\n')
-
-            if args.LR_scheduler == 'step':
-                scheduler = lr_scheduler.StepLR(optimizer, args.LR_step_after, gamma=args.LR_step)
-                #scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[20, 60, 120], gamma=args.LR_step)
-                lr = scheduler.get_lr()[0]
-            elif args.LR_scheduler == 'exp':
-                scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=args.LR_decay)
-                lr = scheduler.get_lr()[0]
-            elif args.LR_scheduler == 'triangle':
-                lr_increment = args.LR / ((args.LR_max_epoch + 1) * num_train_batches)
-                mom_decrement = args.momentum / ((args.LR_max_epoch + 1) * num_train_batches)
-                lr_decrement = (args.LR - 0.05 * args.LR) / ((args.nepochs - args.LR_max_epoch - args.LR_finetune_epochs) * num_train_batches)
-                lr_decrement2 = (0.05 * args.LR) / (args.LR_finetune_epochs * num_train_batches)
-                mom_increment = (args.LR - 0.05 * args.LR) / (   #TODO!!!
-                                (args.nepochs - args.LR_max_epoch - args.LR_finetune_epochs) * num_train_batches)
-                mom_increment2 = (0.05 * args.LR) / (args.LR_finetune_epochs * num_train_batches)
-                lr = 0
-                mom = args.momentum
-
-            prev_best_acc = 15
-            grad_norms = []
-            act_grad_norms = []
-            act_norms = []
-            weight_norms = []
-            w_sparsity = []
-            max_weights = []
-            max_acts = []
-            max_grads = []
-            max_act_grads = []
-            best_accuracy_dist_string = ''
-            norm_string = ''
-            max_string = ''
-
-            # when quantizing activations, calculate signal ranges in all layers
-            if args.q_a > 0 and args.calculate_running:
-                for m in model.modules():
-                    if isinstance(m, QuantMeasure):
-                        m.calculate_running = True
-                        m.running_list = []
-
-            for epoch in range(args.nepochs):
-                model.power = [[] for _ in range(args.num_layers)]
-                model.nsr = [[] for _ in range(args.num_layers)]
-                model.input_sparsity = [[] for _ in range(args.num_layers)]
-
-                model.train()
-                tr_accuracies = []
-                te_accuracies = []
-                te_accuracies_dist = []
-
-                if args.LR_scheduler == 'manual':
-                    lr = args.LR * args.LR_step ** (epoch // args.LR_step_after)
-                    for param_group in optimizer.param_groups:
-                        param_group['lr'] = lr #/ args.batch_size
-                elif args.LR_scheduler != 'triangle':
-                    scheduler.step()
-                    lr = scheduler.get_lr()[0]
-
-                rnd_idx = np.random.permutation(len(train_inputs))
-                train_inputs = train_inputs[rnd_idx]
-                train_labels = train_labels[rnd_idx]
-
-                if args.train_w_max:
-                    w_max1_grad_sum = 0
-
-                if args.split:
-                    args.current1 = args.current2 = args.current3 = args.current4 = args.train_current
-                    args.layer_currents = [args.current1, args.current2, args.current3, args.current4]
-
-                    if epoch == 0:
-                        print('*********************** Setting Train Current to', args.train_current, 'currents:', args.current1, args.current2, args.current3, args.current4)
-
-                clip_string = ''
-
-                for i in range(num_train_batches):
-                    # when quantizing activations, calculate signal ranges in all layers for the first 5 batches:
-                    if args.q_a > 0 and args.calculate_running and epoch == 0 and i == 5:
-                        print('\n')
-                        with torch.no_grad():
-                            for m in model.modules():
-                                #print(m)
-                                if isinstance(m, QuantMeasure):
-                                    m.calculate_running = False
-                                    m.running_max = torch.tensor(m.running_list, device='cuda:0').mean()
-                                    print('(train) running_list:', m.running_list, 'running_max:', m.running_max.item())
-
-                    input = train_inputs[i * args.batch_size:(i + 1) * args.batch_size]  #(64, 3, 32, 32)
-                    label = train_labels[i * args.batch_size:(i + 1) * args.batch_size]
-
-                    if args.augment:
-                        k = random.randint(0, 8)
-                        j = random.randint(0, 8)
-                        input = input[:, :, k:k + 32, j:j + 32]
-                        if random.random() < 0.5:
-                            input = torch.flip(input, [3])
-
-                    if te_acc > 0:
-                        acc_ = te_acc
-                    else:
-                        acc_ = 10.  #needed to pass to forward
-
-                    output = model(input, epoch, i, s, acc=acc_)
-                    #loss = nn.CrossEntropyLoss(reduction='none')(output, label).sum()
-                    loss = nn.CrossEntropyLoss()(output, label)
-
-                    if args.debug and i < 2 and epoch == 0:
-                        utils.print_batchnorm(model, i)
-
-                    if args.LR_scheduler == 'triangle':
-                        if epoch <= args.LR_max_epoch:
-                            lr +=  lr_increment
-                            mom -= mom_decrement
-                        elif epoch <= args.nepochs - args.LR_finetune_epochs:
-                            lr -= lr_decrement
-                            mom += mom_increment
-                        else:
-                            lr -= lr_decrement2
-                            mom += mom_increment2
-
-                        for param_group in optimizer.param_groups:
-                            param_group['lr'] = lr / args.batch_size
-                            param_group['momentum'] = mom
-
-                    if args.L2_act1 > 0:  #does not help
-                        loss += args.L2_act1 * (model.conv1_).pow(2).sum()
-                    if args.L2_act2 > 0:
-                        loss += args.L2_act2 * (model.conv2_).pow(2).sum()
-                    if args.L2_act3 > 0:
-                        loss += args.L2_act3 * (model.linear1_).pow(2).sum()
-                    if args.L2_act4 > 0:
-                        loss += args.L2_act4 * (model.linear2_).pow(2).sum()
-
-                    if args.L1_1 > 0:
-                        if epoch == 0 and i == 0:
-                            print('\n\nApplying L1 loss penalty {} in conv1 layer\n'.format(args.L1_1))
-                        loss = loss + args.L1_1 * model.conv1.weight.norm(p=1)
-
-                    if args.L1_2 > 0:
-                        if epoch == 0 and i == 0:
-                            print('\nApplying L1 loss penalty {} in conv2 layer\n'.format(args.L1_2))
-                        loss = loss + args.L1_2 * model.conv2.weight.norm(p=1)
-
-                    if args.L1_3 > 0:
-                        if epoch == 0 and i == 0:
-                            print('\nApplying L1 loss penalty {} in linear1 layer\n'.format(args.L1_3))
-                        loss = loss + args.L1_3 * model.linear1.weight.norm(p=1)
-
-                    if args.L1_4 > 0:
-                        if epoch == 0 and i == 0:
-                            print('\nApplying L1 loss penalty {} in linear2 layer\n'.format(args.L1_4))
-                        loss = loss + args.L1_4 * model.linear2.weight.norm(p=1)
-
-
-                    if args.train_act_max and args.L2_act_max > 0:
-                        if args.current1 == 0:
-                            loss = loss + args.L2_act_max * (model.act_max1 ** 2 + model.act_max2 ** 2 + model.act_max3 ** 2)
-                        else:
-                            loss = loss + args.L2_act_max * ((model.act_max1 ** 2) / args.current2 + (model.act_max2 ** 2) / args.current3 + (model.act_max3 ** 2) / args.current4)
-
-                    if args.train_w_max and args.L2_w_max > 0:
-                        if i % 100 == 0:
-                            pass
-                            #print('w_min1/w_max1: {:.2f}/{:.2f}'.format(model.w_min1.item(), model.w_max1.item()))
-                        loss = loss + args.L2_w_max * (model.w_min1 ** 2 + model.w_max1 ** 2)
-
-                    if args.batchnorm:  #haven't tested this properly
-                        if args.L2_bn_weight > 0:
-                            loss = loss + args.L2_bn_weight * (torch.sum(model.bn1.weight ** 2) + torch.sum(model.bn2.weight ** 2))
-                        if args.L2_bn_bias > 0:
-                            loss = loss + args.L2_bn_bias * (torch.sum(model.bn1.bias ** 2) + torch.sum(model.bn2.bias ** 2))
-
-                    optimizer.zero_grad()
-
-                    if args.L3_new > 0:  # L2 penalty for gradient size
-                        params = [model.conv1.weight, model.conv2.weight, model.linear1.weight, model.linear2.weight]
-                        param_grads = torch.autograd.grad(loss, params, create_graph=True, only_inputs=True)
-                        # torch.autograd.grad does not accumuate the gradients into the .grad attributes. It instead returns the gradients as Variable tuples.
-                        # now compute the 2-norm of the param_grads
-                        grad_norm = 0
-                        for grad in param_grads:
-                            # print('param_grad {}:\n{}\ngrad.pow(2).mean(): {:.4f}'.format(grad.shape, grad[0,0], grad.pow(2).mean().item()))
-                            if args.L3_L2:
-                                grad_norm += args.L3_new * grad.pow(2).sum()#.mean()
-                            elif args.L3_L1:
-                                grad_norm += args.L3_new * grad.norm(p=1)
-                        # take the gradients wrt grad_norm. backward() will accumulate the gradients into the .grad attributes
-                        # grad_norm.backward(retain_graph=False)  # or like this:
-                        # print('loss {:.4f} grad_norm {:.4f}'.format(loss.item(), grad_norm.item()))
-                        #print('\nloss before', loss.item())
-                        loss = loss + grad_norm
-                        #print('\nloss after ', loss.item())
-
-                    if args.L3 > 0 or args.L4 > 0 or args.print_stats:
-                        retain_graph = True
-                    else:
-                        retain_graph = False
-
-                    loss.backward(retain_graph=retain_graph)
-
-                    if args.print_stats and i == 0:
-                        for act in [model.conv1_, model.conv2_, model.linear1_, model.linear2_]:
-                            act_norms.append(torch.mean(torch.abs(act)).item())
-                        for param in [model.conv1.weight, model.conv2.weight, model.linear1.weight, model.linear2.weight]:
-                            weight_norms.append(torch.mean(torch.abs(param)).item())
-
-                        if args.L3 == 0:
-                            params = [model.conv1.weight, model.conv2.weight, model.linear1.weight, model.linear2.weight]
-                            param_grads = torch.autograd.grad(loss, params, create_graph=True)
-                            for grad in param_grads:
-                                grad_norms.append(torch.mean(torch.abs(grad)).item() * 1000.)
-
-                        if args.L3_act == 0:
-                            acts = [model.conv1_, model.conv2_, model.linear1_, model.linear2_]
-                            acts_grad = torch.autograd.grad(loss, acts, create_graph=True)
-                            for act_grad in acts_grad:
-                                act_grad_norms.append(torch.mean(torch.abs(act_grad)).item()*1000.)
-
-                    if args.L3_act > 0:   #L2 penalty for gradient size in respect to activations
-                        acts = [model.conv1_, model.conv2_, model.linear1_, model.linear2_]
-                        acts_grad = torch.autograd.grad(loss, acts, create_graph=True)
-                        # torch.autograd.grad does not accumuate the gradients into the .grad attributes. It instead returns the gradients as Variable tuples.
-                        # now compute the 2-norm of the param_grads
-                        act_grad_norm = args.L3_act * torch.stack([act_grad.pow(2).sum() for act_grad in acts_grad]).sum()  #.sqrt()
-
-                        if i == 0:
-                            act_grad_norms = [torch.mean(torch.abs(act_grad)).item()*1000. for act_grad in acts_grad]
-                            #max_act_grads.append(torch.max(torch.abs(act_grad)).item())
-
-                        # take the gradients wrt grad_norm. backward() will accumulate the gradients into the .grad attributes
-                        if False and i == 0:
-                            print('\n\nconv1 grads before\n{}'.format(model.conv1.weight.grad.detach().cpu().numpy()[0, 0]))
-                        act_grad_norm.backward(retain_graph=False)
-                        if False and i == 0:
-                            print('\n\nconv1 grads after\n{}\n\n'.format(model.conv1.weight.grad.detach().cpu().numpy()[0, 0]))
-
-                    if args.L3 > 0:   #L2 penalty for gradient size
-                        params = [model.conv1.weight, model.conv2.weight, model.linear1.weight, model.linear2.weight]
-                        param_grads = torch.autograd.grad(loss, params, create_graph=True, only_inputs=True)
-                        # torch.autograd.grad does not accumuate the gradients into the .grad attributes. It instead returns the gradients as Variable tuples.
-                        # now compute the 2-norm of the param_grads
-                        grad_sum = 0
-                        grad_norm = 0
-                        for grad in param_grads:
-                            if args.L4 > 0:
-                                grad_sum += grad.pow(2).sum()
-                            grad_norm += args.L3 * grad.pow(2).sum()
-                            if i == 0:
-                                grad_norms.append(torch.mean(torch.abs(grad)).item()*1000.)
-                                #max_grads.append(torch.max(torch.abs(grad)).item())
-
-                        # take the gradients wrt grad_norm. backward() will accumulate the gradients into the .grad attributes
-                        if args.L4 > 0:
-                            retain_graph = True
-                        else:
-                            retain_graph = False
-                        grad_norm.backward(retain_graph=retain_graph)
-
-                        if args.L4 > 0:
-                            grads2 = torch.autograd.grad(grad_sum, params, create_graph=False)
-                            #grads2 = torch.autograd.grad(grad_norm, params, create_graph=True)
-                            g2_norm = 0
-                            for g2 in grads2:
-                                #g2_norm += g2.norm(p=2)
-                                g2_norm += g2.pow(2).sum()
-                            g2_norm = args.L4 * g2_norm
-
-                            g2_norm.backward(retain_graph=True)
-
-                    if args.print_stats and i == 0:
-                        norm_string = '  weights {}  weight_grads {}  acts {}  act_grads {}'.format(
-                            '{:.2f} {:.2f} {:.2f} {:.2f}'.format(*weight_norms), '{:.2f} {:.2f} {:.2f} {:.2f}'.format(*grad_norms),
-                            '{:.2f} {:.2f} {:.2f} {:.2f}'.format(*act_norms), '{:.2f} {:.2f} {:.2f} {:.2f}'.format(*act_grad_norms))
-                        norm_string_reduced = '  weights {}  acts {}'.format(
-                            '{:.2f} {:.2f} {:.2f} {:.2f}'.format(*weight_norms), '{:.2f} {:.2f} {:.2f} {:.2f}'.format(*act_norms))
-                        #max_string = 'max weights {}  weight_grads {}  acts {}  act_grads {}'.format('{:.3f} {:.3f} {:.3f} {:.3f}'.format(*max_weights),
-                            #'{:.3f} {:.3f} {:.3f} {:.3f}'.format(*max_grads), '{:.3f} {:.3f} {:.3f} {:.3f}'.format(*max_acts), '{:.3f} {:.3f} {:.3f} {:.3f}'.format(*max_act_grads))
-                        grad_norms = []
-                        act_grad_norms = []
-                        act_norms = []
-                        weight_norms = []
-                        max_weights = []
-                        max_acts = []
-                        max_grads = []
-                        max_act_grads = []
-
-                    if args.L4 > 0 and args.L3 == 0:  #L2 penalty for second order gradient size
-                        params = [model.conv1.weight, model.conv2.weight, model.linear1.weight, model.linear2.weight]
-                        grads = torch.autograd.grad(loss, params, create_graph=True)
-
-                        grads_sum = 0
-                        for g in grads:
-                            #grads_sum += torch.abs(g).sum()
-                            grads_sum += g.pow(2).sum()
-                        grads2 = torch.autograd.grad(grads_sum, params, create_graph=True)
-
-                        g2_norm = 0
-                        for g2 in grads2:
-                            #g2_norm += g2.norm(p=2)
-                            g2_norm += g2.pow(2).sum()
-                        g2_norm = args.L4 * g2_norm
-
-                        g2_norm.backward(retain_graph=False)
-
-                    if args.grad_clip > 0:
-                        for n, p in model.named_parameters():
-                            p.grad.data.clamp_(-args.grad_clip, args.grad_clip)
+                    args.L2_1 = args.L2_2 = args.L2_3 = args.L2_4 = args.L2
+                print('\n\nSetting L2 in all layers to {}\n\n'.format(args.L2_1))
+
+            if args.L1 > 0:
+                args.L1_1 = args.L1_2 = args.L1_3 = args.L1_4 = args.L1
+
+            if args.dropout > 0 and args.var_name != 'dropout':
+                #pass
+                #args.dropout = 0.1 * args.width
+                '''
+                if args.q_a2 == 0:
+                    args.dropout = args.width * 4 / 40.
+                else:
+                    args.dropout = args.width * args.q_a2 / 40.
+                '''
+                print('\n\nSetting dropout in fc layers to {}\n\n'.format(args.dropout))
+
+
+            if args.act_max > 0:
+                print('\n\nSetting act clipping in all layers to {}\n\n'.format(args.act_max))
+                args.act_max1 = args.act_max2 = args.act_max3 = args.act_max
+
+            if args.w_max > 0:
+                args.w_max1 = args.w_max2 = args.w_max3 = args.w_max4 = args.w_max
+
+            if args.n_w > 0:
+                print('\n\nSetting weight noise in all layers to {}\n\n'.format(int(args.n_w*100)))
+                args.n_w1 = args.n_w2 = args.n_w3 = args.n_w4 = args.n_w
+
+            if args.q_w > 0:
+                print('\n\nQuantizing weights in all layers to {} bits\n\n'.format(int(args.q_w)))
+                args.q_w1 = args.q_w2 = args.q_w3 = args.q_w4 = args.q_w
+
+            if args.var_name == "LR":
+                args.LR_1 = args.LR_2 = args.LR_3 = args.LR_4 = args.LR
+
+            results[var] = []
+            results_dist[var] = []
+            te_acc_dists = []
+            power_results[var] = []
+            noise_results[var] = []
+            act_sparsity_results[var] = []
+            w_sparsity_results[var] = []
+            best_accuracies = []
+            best_accuracies_dist = []
+            best_powers = []
+            best_noises = []
+            best_act_sparsities = []
+            best_w_sparsities = []
+            te_acc_dist_string = ''
+            avg_te_acc_dist = 0
+            create_dir = True
+
+            if args.var_name != '':
+                tag = args.tag + args.var_name + '-' + str(var) + '_'
+            else:
+                tag = args.tag
+
+            args.checkpoint_dir = os.path.join('results/', tag + 'current-' + str(args.current1) + '-' + str(args.current2) + '-' + str(args.current3) + '-' + str(args.current4) +
+                '_L3-' + str(args.L3) + '_L3_act-' + str(args.L3_act) + '_L2-' + str(args.L2_1) + '-' + str(args.L2_2) + '-' + str(args.L2_3) + '-' + str(args.L2_4) +
+                '_actmax-' + str(args.act_max1) + '-' + str(args.act_max2) + '-' + str(args.act_max3) +
+                '_w_max1-' + str(args.w_max1) + '-' + str(args.w_max2) + '-' + str(args.w_max3) + '-' + str(args.w_max4) + '_bn-' + str(args.batchnorm) + '_LR-' + str(args.LR) + '_' +
+                'grad_clip-' + str(args.grad_clip) + '_' +
+                datetime.now().strftime('%Y-%m-%d_%H-%M-%S/'))
+
+            for s in range(args.num_sims):
+
+                best_accuracy = 0
+                best_accuracy_dist = 0
+                best_epoch = 0
+                best_power = 0
+                best_nsr = 0
+                best_input_sparsity = 0
+                avg_w_sparsity = 0
+                best_w_sparsity = 0
+                init_epoch = 0
+                te_acc = 0
+                best_power_string = ''
+                best_noise_string = ''
+                best_input_sparsity_string = ''
+                best_w_sparsity_string = ''
+                w_input_sparsity_string = ''
+                input_sparsity_string = ''
+                noise_string = ''
+                power_string = ''
+                saved = False
+
+                if args.resume is None:
+
+                    model = Net(args=args)
+                    utils.init_model(model, args, s)
+                    model = model.cuda() #do this before constructing optimizer!!
+                    if args.fp16:
+                        model = model.half()
+                        if args.keep_bn_fp32:
+                            for layer in model.modules():
+                                if isinstance(layer, nn.BatchNorm2d) or isinstance(layer, nn.BatchNorm1d):
+                                    layer.float()
 
                     if args.train_w_max:
-                        w_max1_grad = torch.sum(model.conv1.weight.grad[model.conv1.weight >= model.w_max1])  #sum of conv1 weight gradients for all weights above threshold
-                        w_min1_grad = torch.sum(model.conv1.weight.grad[model.conv1.weight <= model.w_min1])
-                        #TODO: finish implementing moving avg
-                        #w_max1_grad_sum += w_max1_grad
-                        #w_max1_grad_avg = w_max1_grad_sum / (i + 1)
-                        #w_max1_grad = 0.8 * w_max1_grad_avg + 0.2 * w_max1_grad
+                        print('\n\nSetting w_min1 to {:.2f} and w_max1 to {:.2f}\n\n'.format(model.w_min1.item(), model.w_max1.item()))
 
-                        model.w_min1.data = model.w_min1.data - args.LR_w_max * w_min1_grad
-                        model.w_max1.data = model.w_max1.data - args.LR_w_max * w_max1_grad
+                    if args.train_w_max:
+                        w_max_values = []
+                        w_min_values = []
+                    if args.train_act_max:
+                        act_max1_values = []
+                        act_max2_values = []
+                        act_max3_values = []
 
-                        #model.w_min1.data.clamp_(-100, -0.01)
-                        #model.w_max1.data.clamp_(0.01, 100)
+                else:
+                    print('\n\nLoading model from saved checkpoint at\n{}\n\n'.format(args.resume))
+                    args.checkpoint_dir = '/'.join(args.resume.split('/')[:-1]) + '/'
+                    model = Net(args=args)
+                    model = model.cuda()
 
-                        #model.w_max1.grad += w_max1_grad
-                        #model.w_min1.grad += w_min1_grad
+                    saved_model = torch.load(args.resume)  #ignore unnecessary parameters
 
-                        if args.L2_w_max > 0:
-                            L2_grad = model.w_max1.grad.data.item()
-                            if False and model.w_min1.grad is not None:
-                                model.w_min1.grad.data.clamp_(-1, 1)
-                                model.w_max1.grad.data.clamp_(-1, 1)
+                    for saved_name, saved_param in saved_model.items():
+                        if args.debug:
+                            print(saved_name)
+                        for name, param in model.named_parameters():
+                            if name == saved_name:
+                                if args.debug:
+                                    print('\tmatched, copying...')
+                                param.data = saved_param.data
+                        if 'running_min' in saved_name or 'running_max' in saved_name:
+                            continue
+                        elif 'running' in saved_name and args.track_running_stats:  #batchnorm stats are not in named_parameters
+                            if args.debug:
+                                print('\tmatched, copying...')
+                            m = model.state_dict()
+                            m.update({saved_name: saved_param})
+                            model.load_state_dict(m)
 
-                            model.w_min1.data = model.w_min1.data - args.LR_w_max * model.w_min1.grad.data
-                            model.w_max1.data = model.w_max1.data - args.LR_w_max * model.w_max1.grad.data
+                    #model.load_state_dict(torch.load(args.resume))
+                    if args.distort_w_test and args.var_name != '':
+                        pass
+                    else:
+                        utils.print_model(model, args, full=args.debug)
 
-                            model.w_max1.grad.data[:] = 0
-                            model.w_min1.grad.data[:] = 0
+                    if args.fp16:
+                        model = model.half()
+                        if args.keep_bn_fp32:
+                            for layer in model.modules():
+                                if isinstance(layer, nn.BatchNorm2d) or isinstance(layer, nn.BatchNorm1d):
+                                    layer.float()
 
-                            #model.w_max1.grad.data += w_max1_grad
-                            #model.w_min1.grad.data += w_min1_grad
+                    if args.w_max > 0:
+                        for n, p in model.named_parameters():
+                            if ('conv' in n or 'fc' in n or 'linear' in n) and 'weight' in n:
+                                # print(n, p.shape)
+                                p.data.clamp_(-args.w_max, args.w_max)
+
+                    if args.merge_bn:
+                        merge_batchnorm(model, args)
+
+                    if args.distort_w_test and args.var_name != '':
+                        if args.scale_weights > 0:
+                            noise_levels = [1, 0.5, 0.1, 0.01, 0.98, 0.96, 0.94, 0.92, 0.9, 0.88, 0.86, 0.84, 0.82, 0.8]
                         else:
-                            L2_grad = 0
-                    if False and i == 0:
-                        print('\n\n\nWeights before update:\n{}\n{}\n{}\n{}\n'.format(
-                                model.conv1.weight.detach().cpu().numpy()[0, 0, :2], model.conv2.weight.detach().cpu().numpy()[0, 0, :2],
-                                model.linear1.weight.detach().cpu().numpy()[0, :10], model.linear2.weight.detach().cpu().numpy()[0, :10]))
-
-                    optimizer.step()
-
-                    if False and i == 0:
-                        print('\n\n\nWeights after update:\n{}\n{}\n{}\n{}\n'.format(
-                                model.conv1.weight.detach().cpu().numpy()[0, 0, :2], model.conv2.weight.detach().cpu().numpy()[0, 0, :2],
-                                model.linear1.weight.detach().cpu().numpy()[0, :10], model.linear2.weight.detach().cpu().numpy()[0, :10]))
-
-                    if args.w_max1 > 0:
-                        if args.train_w_max:
-                            model.conv1.weight.data = torch.where(model.conv1.weight > model.w_max1, model.w_max1, model.conv1.weight)
-                            model.conv1.weight.data = torch.where(model.conv1.weight < model.w_min1, model.w_min1, model.conv1.weight)
+                            noise_levels = [0.02, 0.04, 0.06, 0.08, 0.1, 0.12]
+                            #noise_levels = [0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15, 0.2, 0.3]
+                            noise_levels = [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
+                        """
+                        if args.selection_criteria is None:
+                            for args.selection_criteria in ['weight_magnitude', 'grad_magnitude', 'combined']:
+                                print('\n\n\n\n************************* Selection Criteria', args.selection_criteria, ' ***********************\n\n\n\n')
+                                accs = test_distortion(model, args, val_loader=(test_inputs, test_labels), mode='weights', vars=noise_levels)
+                            args.selection_criteria = None
                         else:
-                            model.conv1.weight.data.clamp_(-args.w_max1, args.w_max1)
+                            accs = test_distortion(model, args, val_loader=(test_inputs, test_labels), mode='weights', vars=noise_levels)
+                        """
+                        accs = test_distortion(model, args, val_loader=(test_inputs, test_labels), mode='weights', vars=noise_levels)
+                        print('\n\n{:>2d}% selected weights: {}'.format(int(var), accs))
+                        acc_lists.append(accs)
+                        if var == var_list[-1]:
+                            print('\n\nNoise levels (%):', noise_levels, '\n')
+                            for v, accs in zip(var_list, acc_lists):
+                                print('sel_{:02d}_scale_{:d} = {}'.format(int(v), int(args.selected_weights_noise_scale * 100), accs))
+                            print('\n\n')
+                            raise(SystemExit)
+                        break
 
-                    if args.w_max2 > 0:
-                        model.conv2.weight.data.clamp_(-args.w_max2, args.w_max2)
+                    model.eval()
 
-                    if args.w_max3 > 0:
-                        model.linear1.weight.data.clamp_(-args.w_max3, args.w_max3)
-                        model.linear1.weight.data.clamp_(-args.w_max3, args.w_max3)
+                    model_fname = args.resume.split('/')[-1]
+                    init_epoch = int(model_fname.split('_')[2])
+                    init_acc = model_fname.split('_')[-1][:-4]
+                    print('\n\nCurrents:', args.current1, args.current2, args.current3, args.current4)
 
-                    if args.w_max4 > 0:
-                        model.linear2.weight.data.clamp_(-args.w_max4, args.w_max4)
+                    model.power = [[] for _ in range(args.num_layers)]  #[[]]*num_layers won't work!
+                    model.nsr = [[] for _ in range(args.num_layers)]
+                    model.input_sparsity = [[] for _ in range(args.num_layers)]
+                    w_sparsity = []
+                    te_accs = []
 
-                    pred = output.data.max(1)[1]
-                    acc = pred.eq(label.data).cpu().sum().numpy() * 100.0 / args.batch_size
-                    tr_accuracies.append(acc)
-
-                tr_acc = np.mean(tr_accuracies, dtype=np.float64)
-
-                model.eval()
-                if args.split:
-                    args.current1 = args.current2 = args.current3 = args.current4 = args.test_current
-                    args.layer_currents = [args.current1, args.current2, args.current3, args.current4]
-                    if epoch == 0:
-                        print('*********************** Setting Test Current to', args.test_current, 'currents:', args.current1, args.current2, args.current3, args.current4)
-
-                #print('\n\n\nWeights after update:\n{}\n{}\n{}\n{}\n'.format(model.conv1.weight.data.detach().cpu().numpy()[0, 0, :2],
-                        #model.conv2.weight.data.detach().cpu().numpy()[0, 0, :2], model.linear1.weight.data.detach().cpu().numpy()[0, :10], model.linear2.weight.data.detach().cpu().numpy()[0, :10]))
-
-                with torch.no_grad():
-                    for i in range(num_test_batches):
+                    for i in range(10000 // args.batch_size):
                         input = test_inputs[i * args.batch_size:(i + 1) * args.batch_size]
                         label = test_labels[i * args.batch_size:(i + 1) * args.batch_size]
-                        output = model(input, epoch, i)
+                        output = model(input, init_epoch, i, acc=float(init_acc))
                         pred = output.data.max(1)[1]
                         te_acc = pred.eq(label.data).cpu().sum().numpy() * 100.0 / args.batch_size
-                        te_accuracies.append(te_acc)
+                        te_accs.append(te_acc)
 
                     if args.print_stats:
                         p = []
@@ -1586,206 +1099,705 @@ for current in current_vars:
                         total_power = np.nansum(p)
                         power_string = '  Power {:.2f}mW ({:.2f} {:.2f} {:.2f} {:.2f})'.format(total_power, *p)
 
-                te_acc = np.mean(te_accuracies, dtype=np.float64)
+                    te_acc = np.mean(te_accs, dtype=np.float64)
 
-                if args.distort_w_test:
-                    noise_levels = [0.02, 0.04, 0.06, 0.08, 0.1, 0.12]
-                    #noise_levels = [0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15, 0.2, 0.3]
-                    noise_levels = [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
-                    avg_te_acc_dist = test_distortion(model, args, val_loader=(test_inputs, test_labels), mode='weights', vars=noise_levels)
-                    te_acc_dist_string = ' ({:.2f})'.format(avg_te_acc_dist)
+                    print('\n\nRestored Model Accuracy (epoch {:d}): {:.2f}{}{}{}\n\n'.format(init_epoch, te_acc, power_string, noise_string, input_sparsity_string))
+                    if not args.distort_w_test and args.q_w == 0:
+                        raise(SystemExit)
+                    best_accuracy = te_acc
+                    best_epoch = init_epoch
+                    create_dir = False
+                    init_epoch += 1
+
+                    if args.print_clip:
+                        np.set_printoptions(precision=8, threshold=100000)
+                        w1 = model.conv1.weight.detach().cpu().numpy().flatten()
+                        print(w1[:100])
+                        freqs, vals = np.histogram(w1, bins=100)
+                        print('\n', freqs, '\n', vals, '\n')
+
+                        pos_w = len(w1[w1 > 0.99*args.w_max1])
+                        neg_w = len(w1[w1 < -0.99*args.w_max1])
+                        total_w = pos_w + neg_w
+                        print('\npos saturated weghts: ', pos_w)
+                        print('\nneg saturated weghts: ', neg_w)
+                        print('\ntotal saturated:      ', total_w)
+                        print('\ntotal weights:        ', len(w1))
+                        fraction = 100. * total_w // len(w1)
+                        print('\n\nFraction of clipped first layer weights: {:.2f}%\n\n'.format(fraction))
+
+                    if args.distort_w_test:
+                        noise_levels = [0.02, 0.04, 0.06, 0.08, 0.1, 0.12]
+                        #noise_levels = [0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15, 0.2, 0.3]
+                        noise_levels = [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
+                        """
+                        if args.selection_criteria is None:
+                            for args.selection_criteria in ['weight_magnitude', 'grad_magnitude', 'combined']:
+                                print('\n\n\n\n************************* Selection Criteria', args.selection_criteria, ' ***********************\n\n\n\n')
+                                test_distortion(model, args, val_loader=(test_inputs, test_labels), mode='weights', vars=noise_levels)
+                        else:
+                            test_distortion(model, args, val_loader=(test_inputs, test_labels), mode='weights', vars=noise_levels)
+                        raise (SystemExit)
+                        """
+                        test_distortion(model, args, val_loader=(test_inputs, test_labels), mode='weights', vars=noise_levels)
+
+                if s == 0:
+                    utils.print_model(model, args, full=args.debug)
+
+                param_groups = [
+                    {'params': model.conv1.parameters(), 'weight_decay': args.L2_1, 'lr': args.LR_1},
+                    {'params': model.conv2.parameters(), 'weight_decay': args.L2_2, 'lr': args.LR_2},
+                    {'params': model.linear1.parameters(), 'weight_decay': args.L2_3, 'lr': args.LR_3},
+                    {'params': model.linear2.parameters(), 'weight_decay': args.L2_4, 'lr': args.LR_4}]
 
                 if args.train_act_max:
-                    clip_string = '  act_max {:.2f} {:.2f} {:.2f}'.format(model.act_max1.item(), model.act_max2.item(), model.act_max3.item())
-                    act_max1_values.append(model.act_max1.item())
-                    act_max2_values.append(model.act_max2.item())
-                    act_max3_values.append(model.act_max3.item())
+                    param_groups = param_groups + [
+                        {'params': model.act_max1, 'weight_decay': 0, 'lr': args.LR_act_max},
+                        {'params': model.act_max2, 'weight_decay': 0, 'lr': args.LR_act_max},
+                        {'params': model.act_max3, 'weight_decay': 0, 'lr': args.LR_act_max}]
+
                 if args.train_w_max:
-                    clip_string += '  w_min/max {:.3f} {:.3f}'.format(model.w_min1.item(), model.w_max1.item())
-                    w_max_values.append(model.w_max1.item())
-                    w_min_values.append(model.w_min1.item())
+                    param_groups = param_groups + [
+                        {'params': model.w_min1, 'weight_decay': 0, 'lr': args.LR_w_max},
+                        {'params': model.w_max1, 'weight_decay': 0, 'lr': args.LR_w_max}]
 
-                if args.q_a1 > 0 or args.q_a2 > 0 or args.q_a3 > 0 or args.q_a4 > 0:
-                    act_q_string = '  q {:d} {:d} {:d} {:d}'.format(args.q_a1, args.q_a2, args.q_a3, args.q_a4)
-                else:
-                    act_q_string = ''
+                if args.batchnorm:
+                    param_groups = param_groups + [
+                        {'params': model.bn1.parameters(), 'weight_decay': args.L2_bn},
+                        {'params': model.bn2.parameters(), 'weight_decay': args.L2_bn}]
+                    if args.bn3:
+                        param_groups = param_groups + [
+                            {'params': model.bn3.parameters(), 'weight_decay': args.L2_bn}]
+                    if args.bn4:
+                        param_groups = param_groups + [
+                            {'params': model.bn4.parameters(), 'weight_decay': args.L2_bn}]
 
-                if args.print_stats:
-                    for n, p in model.named_parameters():  # calcualte weight sparsity as the smallest 2% of all weights by magnitude
-                        if 'weight' in n and ('linear' in n or 'conv' in n):
-                            w_sparsity.append(p[torch.abs(p) > 0.02*(p.max() - p.min())].numel() / p.numel())
-                    avg_w_sparsity = np.mean(w_sparsity, dtype=np.float64)
-                    w_sparsity_string = '  w spars {:.2f} ({:.2f} {:.2f} {:.2f} {:.2f})'.format(avg_w_sparsity, *w_sparsity)
 
-                    print('{}\tEpoch {:>3d}  Train {:.2f}  Test {:.2f}{}  LR {:.4f}{}{}{}{}{}{}{}'.format(
-                        str(datetime.now())[:-7], epoch, tr_acc, te_acc, te_acc_dist_string, lr, clip_string, power_string,
-                        noise_string, w_sparsity_string, input_sparsity_string, act_q_string, norm_string_reduced))
-                else:
-                    print('{}\tEpoch {:>3d}  Train {:.2f}  Test {:.2f}  LR {:.4f}'.format(str(datetime.now())[:-7], epoch, tr_acc, te_acc, lr))
+                if args.optim == 'SGD':
+                    optimizer = torch.optim.SGD(param_groups, lr=args.LR, momentum=args.momentum, nesterov=args.nesterov)
+                elif args.optim == 'Adam':
+                    optimizer = torch.optim.Adam(param_groups, lr=args.LR, amsgrad=args.amsgrad)
+                elif args.optim == 'AdamW':
+                    optimizer = torch.optim.AdamW(param_groups, lr=args.LR, amsgrad=args.amsgrad)
+                    if s == 0:
+                        print('\n\n*********** Using AdamW **********\n')
+                        for param_group in optimizer.param_groups:
+                            print('param_group weight decay {} LR {}'.format(param_group["weight_decay"], param_group["lr"]))
+                        print('\n')
 
-                #print('Epoch {:>3d}  Train {:.2f}  Test {:.2f}  {}\n\t\t\t\t{}\n'.format(epoch, tr_acc, te_acc, norm_string, max_string))
-                #print('Epoch {:>3d}  Train {:.2f}  Test {:.2f}  {} {}'.format(epoch, tr_acc, te_acc, norm_string, power_string))
+                if args.LR_scheduler == 'step':
+                    scheduler = lr_scheduler.StepLR(optimizer, args.LR_step_after, gamma=args.LR_step)
+                    #scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[20, 60, 120], gamma=args.LR_step)
+                    lr = scheduler.get_lr()[0]
+                elif args.LR_scheduler == 'exp':
+                    scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=args.LR_decay)
+                    lr = scheduler.get_lr()[0]
+                elif args.LR_scheduler == 'triangle':
+                    lr_increment = args.LR / ((args.LR_max_epoch + 1) * num_train_batches)
+                    mom_decrement = args.momentum / ((args.LR_max_epoch + 1) * num_train_batches)
+                    lr_decrement = (args.LR - 0.05 * args.LR) / ((args.nepochs - args.LR_max_epoch - args.LR_finetune_epochs) * num_train_batches)
+                    lr_decrement2 = (0.05 * args.LR) / (args.LR_finetune_epochs * num_train_batches)
+                    mom_increment = (args.LR - 0.05 * args.LR) / (   #TODO!!!
+                                    (args.nepochs - args.LR_max_epoch - args.LR_finetune_epochs) * num_train_batches)
+                    mom_increment2 = (0.05 * args.LR) / (args.LR_finetune_epochs * num_train_batches)
+                    lr = 0
+                    mom = args.momentum
 
-                if te_acc > best_accuracy:
-                #if avg_te_acc_dist > best_accuracy_dist:
-                    if saved:
-                        os.remove(args.checkpoint_dir + '/model_epoch_{:d}_acc_{:.2f}.pth'.format(best_epoch, saved_accuracy))
+                prev_best_acc = 15
+                grad_norms = []
+                act_grad_norms = []
+                act_norms = []
+                weight_norms = []
+                w_sparsity = []
+                max_weights = []
+                max_acts = []
+                max_grads = []
+                max_act_grads = []
+                best_accuracy_dist_string = ''
+                norm_string = ''
+                max_string = ''
 
-                    if epoch > init_epoch + 10:
-                        if create_dir:
-                            utils.saveargs(args)
-                            create_dir = False
-                        if s == 0:
-                            saved_accuracy = te_acc
-                            torch.save(model.state_dict(), args.checkpoint_dir + '/model_epoch_{:d}_acc_{:.2f}.pth'.format(epoch, te_acc))
-                            best_saved_acc = te_acc
-                            saved = True
+                # when quantizing activations, calculate signal ranges in all layers
+                if args.q_a > 0 and args.calculate_running:
+                    for m in model.modules():
+                        if isinstance(m, QuantMeasure):
+                            m.calculate_running = True
+                            m.running_list = []
 
-                    best_accuracy = te_acc
-                    best_accuracy_dist = avg_te_acc_dist
-                    best_epoch = epoch
-                    if args.print_stats:
-                        best_nsr = avg_nsr
-                        best_input_sparsity = avg_input_sparsity
-                        best_w_sparsity = avg_w_sparsity
-                        best_power_string = power_string
-                        best_noise_string = noise_string
-                        best_input_sparsity_string = input_sparsity_string
-                        best_w_sparsity_string = w_sparsity_string
-                        best_accuracy_dist_string = te_acc_dist_string
-                        best_power = total_power
+                for epoch in range(args.nepochs):
+                    model.power = [[] for _ in range(args.num_layers)]
+                    model.nsr = [[] for _ in range(args.num_layers)]
+                    model.input_sparsity = [[] for _ in range(args.num_layers)]
 
-                if epoch != 0 and epoch % args.early_stop_after == 0:
-                    if best_accuracy <= prev_best_acc:
-                        break
+                    model.train()
+                    tr_accuracies = []
+                    te_accuracies = []
+                    te_accuracies_dist = []
+
+                    if args.LR_scheduler == 'manual':
+                        lr = args.LR * args.LR_step ** (epoch // args.LR_step_after)
+                        for param_group in optimizer.param_groups:
+                            param_group['lr'] = lr #/ args.batch_size
+                    elif args.LR_scheduler != 'triangle':
+                        scheduler.step()
+                        lr = scheduler.get_lr()[0]
+
+                    rnd_idx = np.random.permutation(len(train_inputs))
+                    train_inputs = train_inputs[rnd_idx]
+                    train_labels = train_labels[rnd_idx]
+
+                    if args.train_w_max:
+                        w_max1_grad_sum = 0
+
+                    if args.split:
+                        args.current1 = args.current2 = args.current3 = args.current4 = args.train_current
+                        args.layer_currents = [args.current1, args.current2, args.current3, args.current4]
+
+                        if epoch == 0:
+                            print('*********************** Setting Train Current to', args.train_current, 'currents:', args.current1, args.current2, args.current3, args.current4)
+
+                    clip_string = ''
+
+                    for i in range(num_train_batches):
+                        # when quantizing activations, calculate signal ranges in all layers for the first 5 batches:
+                        if args.q_a > 0 and args.calculate_running and epoch == 0 and i == 5:
+                            print('\n')
+                            with torch.no_grad():
+                                for m in model.modules():
+                                    #print(m)
+                                    if isinstance(m, QuantMeasure):
+                                        m.calculate_running = False
+                                        m.running_max = torch.tensor(m.running_list, device='cuda:0').mean()
+                                        print('(train) running_list:', m.running_list, 'running_max:', m.running_max.item())
+
+                        input = train_inputs[i * args.batch_size:(i + 1) * args.batch_size]  #(64, 3, 32, 32)
+                        label = train_labels[i * args.batch_size:(i + 1) * args.batch_size]
+
+                        if args.augment:
+                            k = random.randint(0, 8)
+                            j = random.randint(0, 8)
+                            input = input[:, :, k:k + 32, j:j + 32]
+                            if random.random() < 0.5:
+                                input = torch.flip(input, [3])
+
+                        if te_acc > 0:
+                            acc_ = te_acc
+                        else:
+                            acc_ = 10.  #needed to pass to forward
+
+                        output = model(input, epoch, i, s, acc=acc_)
+                        #loss = nn.CrossEntropyLoss(reduction='none')(output, label).sum()
+                        loss = nn.CrossEntropyLoss()(output, label)
+
+                        if args.debug and i < 2 and epoch == 0:
+                            utils.print_batchnorm(model, i)
+
+                        if args.LR_scheduler == 'triangle':
+                            if epoch <= args.LR_max_epoch:
+                                lr +=  lr_increment
+                                mom -= mom_decrement
+                            elif epoch <= args.nepochs - args.LR_finetune_epochs:
+                                lr -= lr_decrement
+                                mom += mom_increment
+                            else:
+                                lr -= lr_decrement2
+                                mom += mom_increment2
+
+                            for param_group in optimizer.param_groups:
+                                param_group['lr'] = lr / args.batch_size
+                                param_group['momentum'] = mom
+
+                        if args.L2_act1 > 0:  #does not help
+                            loss += args.L2_act1 * (model.conv1_).pow(2).sum()
+                        if args.L2_act2 > 0:
+                            loss += args.L2_act2 * (model.conv2_).pow(2).sum()
+                        if args.L2_act3 > 0:
+                            loss += args.L2_act3 * (model.linear1_).pow(2).sum()
+                        if args.L2_act4 > 0:
+                            loss += args.L2_act4 * (model.linear2_).pow(2).sum()
+
+                        if args.L1_1 > 0:
+                            if epoch == 0 and i == 0:
+                                print('\n\nApplying L1 loss penalty {} in conv1 layer\n'.format(args.L1_1))
+                            loss = loss + args.L1_1 * model.conv1.weight.norm(p=1)
+
+                        if args.L1_2 > 0:
+                            if epoch == 0 and i == 0:
+                                print('\nApplying L1 loss penalty {} in conv2 layer\n'.format(args.L1_2))
+                            loss = loss + args.L1_2 * model.conv2.weight.norm(p=1)
+
+                        if args.L1_3 > 0:
+                            if epoch == 0 and i == 0:
+                                print('\nApplying L1 loss penalty {} in linear1 layer\n'.format(args.L1_3))
+                            loss = loss + args.L1_3 * model.linear1.weight.norm(p=1)
+
+                        if args.L1_4 > 0:
+                            if epoch == 0 and i == 0:
+                                print('\nApplying L1 loss penalty {} in linear2 layer\n'.format(args.L1_4))
+                            loss = loss + args.L1_4 * model.linear2.weight.norm(p=1)
+
+
+                        if args.train_act_max and args.L2_act_max > 0:
+                            if args.current1 == 0:
+                                loss = loss + args.L2_act_max * (model.act_max1 ** 2 + model.act_max2 ** 2 + model.act_max3 ** 2)
+                            else:
+                                loss = loss + args.L2_act_max * ((model.act_max1 ** 2) / args.current2 + (model.act_max2 ** 2) / args.current3 + (model.act_max3 ** 2) / args.current4)
+
+                        if args.train_w_max and args.L2_w_max > 0:
+                            if i % 100 == 0:
+                                pass
+                                #print('w_min1/w_max1: {:.2f}/{:.2f}'.format(model.w_min1.item(), model.w_max1.item()))
+                            loss = loss + args.L2_w_max * (model.w_min1 ** 2 + model.w_max1 ** 2)
+
+                        if args.batchnorm:  #haven't tested this properly
+                            if args.L2_bn_weight > 0:
+                                loss = loss + args.L2_bn_weight * (torch.sum(model.bn1.weight ** 2) + torch.sum(model.bn2.weight ** 2))
+                            if args.L2_bn_bias > 0:
+                                loss = loss + args.L2_bn_bias * (torch.sum(model.bn1.bias ** 2) + torch.sum(model.bn2.bias ** 2))
+
+                        optimizer.zero_grad()
+
+                        if args.L3_new > 0:  # L2 penalty for gradient size
+                            params = [model.conv1.weight, model.conv2.weight, model.linear1.weight, model.linear2.weight]
+                            param_grads = torch.autograd.grad(loss, params, create_graph=True, only_inputs=True)
+                            # torch.autograd.grad does not accumuate the gradients into the .grad attributes. It instead returns the gradients as Variable tuples.
+                            # now compute the 2-norm of the param_grads
+                            grad_norm = 0
+                            for grad in param_grads:
+                                # print('param_grad {}:\n{}\ngrad.pow(2).mean(): {:.4f}'.format(grad.shape, grad[0,0], grad.pow(2).mean().item()))
+                                if args.L3_L2:
+                                    grad_norm += args.L3_new * grad.pow(2).sum()#.mean()
+                                elif args.L3_L1:
+                                    grad_norm += args.L3_new * grad.norm(p=1)
+                            # take the gradients wrt grad_norm. backward() will accumulate the gradients into the .grad attributes
+                            # grad_norm.backward(retain_graph=False)  # or like this:
+                            # print('loss {:.4f} grad_norm {:.4f}'.format(loss.item(), grad_norm.item()))
+                            #print('\nloss before', loss.item())
+                            loss = loss + grad_norm
+                            #print('\nloss after ', loss.item())
+
+                        if args.L3 > 0 or args.L4 > 0 or args.print_stats:
+                            retain_graph = True
+                        else:
+                            retain_graph = False
+
+                        loss.backward(retain_graph=retain_graph)
+
+                        if args.print_stats and i == 0:
+                            for act in [model.conv1_, model.conv2_, model.linear1_, model.linear2_]:
+                                act_norms.append(torch.mean(torch.abs(act)).item())
+                            for param in [model.conv1.weight, model.conv2.weight, model.linear1.weight, model.linear2.weight]:
+                                weight_norms.append(torch.mean(torch.abs(param)).item())
+
+                            if args.L3 == 0:
+                                params = [model.conv1.weight, model.conv2.weight, model.linear1.weight, model.linear2.weight]
+                                param_grads = torch.autograd.grad(loss, params, create_graph=True)
+                                for grad in param_grads:
+                                    grad_norms.append(torch.mean(torch.abs(grad)).item() * 1000.)
+
+                            if args.L3_act == 0:
+                                acts = [model.conv1_, model.conv2_, model.linear1_, model.linear2_]
+                                acts_grad = torch.autograd.grad(loss, acts, create_graph=True)
+                                for act_grad in acts_grad:
+                                    act_grad_norms.append(torch.mean(torch.abs(act_grad)).item()*1000.)
+
+                        if args.L3_act > 0:   #L2 penalty for gradient size in respect to activations
+                            acts = [model.conv1_, model.conv2_, model.linear1_, model.linear2_]
+                            acts_grad = torch.autograd.grad(loss, acts, create_graph=True)
+                            # torch.autograd.grad does not accumuate the gradients into the .grad attributes. It instead returns the gradients as Variable tuples.
+                            # now compute the 2-norm of the param_grads
+                            act_grad_norm = args.L3_act * torch.stack([act_grad.pow(2).sum() for act_grad in acts_grad]).sum()  #.sqrt()
+
+                            if i == 0:
+                                act_grad_norms = [torch.mean(torch.abs(act_grad)).item()*1000. for act_grad in acts_grad]
+                                #max_act_grads.append(torch.max(torch.abs(act_grad)).item())
+
+                            # take the gradients wrt grad_norm. backward() will accumulate the gradients into the .grad attributes
+                            if False and i == 0:
+                                print('\n\nconv1 grads before\n{}'.format(model.conv1.weight.grad.detach().cpu().numpy()[0, 0]))
+                            act_grad_norm.backward(retain_graph=False)
+                            if False and i == 0:
+                                print('\n\nconv1 grads after\n{}\n\n'.format(model.conv1.weight.grad.detach().cpu().numpy()[0, 0]))
+
+                        if args.L3 > 0:   #L2 penalty for gradient size
+                            params = [model.conv1.weight, model.conv2.weight, model.linear1.weight, model.linear2.weight]
+                            param_grads = torch.autograd.grad(loss, params, create_graph=True, only_inputs=True)
+                            # torch.autograd.grad does not accumuate the gradients into the .grad attributes. It instead returns the gradients as Variable tuples.
+                            # now compute the 2-norm of the param_grads
+                            grad_sum = 0
+                            grad_norm = 0
+                            for grad in param_grads:
+                                if args.L4 > 0:
+                                    grad_sum += grad.pow(2).sum()
+                                grad_norm += args.L3 * grad.pow(2).sum()
+                                if i == 0:
+                                    grad_norms.append(torch.mean(torch.abs(grad)).item()*1000.)
+                                    #max_grads.append(torch.max(torch.abs(grad)).item())
+
+                            # take the gradients wrt grad_norm. backward() will accumulate the gradients into the .grad attributes
+                            if args.L4 > 0:
+                                retain_graph = True
+                            else:
+                                retain_graph = False
+                            grad_norm.backward(retain_graph=retain_graph)
+
+                            if args.L4 > 0:
+                                grads2 = torch.autograd.grad(grad_sum, params, create_graph=False)
+                                #grads2 = torch.autograd.grad(grad_norm, params, create_graph=True)
+                                g2_norm = 0
+                                for g2 in grads2:
+                                    #g2_norm += g2.norm(p=2)
+                                    g2_norm += g2.pow(2).sum()
+                                g2_norm = args.L4 * g2_norm
+
+                                g2_norm.backward(retain_graph=True)
+
+                        if args.print_stats and i == 0:
+                            norm_string = '  weights {}  weight_grads {}  acts {}  act_grads {}'.format(
+                                '{:.2f} {:.2f} {:.2f} {:.2f}'.format(*weight_norms), '{:.2f} {:.2f} {:.2f} {:.2f}'.format(*grad_norms),
+                                '{:.2f} {:.2f} {:.2f} {:.2f}'.format(*act_norms), '{:.2f} {:.2f} {:.2f} {:.2f}'.format(*act_grad_norms))
+                            norm_string_reduced = '  weights {}  acts {}'.format(
+                                '{:.2f} {:.2f} {:.2f} {:.2f}'.format(*weight_norms), '{:.2f} {:.2f} {:.2f} {:.2f}'.format(*act_norms))
+                            #max_string = 'max weights {}  weight_grads {}  acts {}  act_grads {}'.format('{:.3f} {:.3f} {:.3f} {:.3f}'.format(*max_weights),
+                                #'{:.3f} {:.3f} {:.3f} {:.3f}'.format(*max_grads), '{:.3f} {:.3f} {:.3f} {:.3f}'.format(*max_acts), '{:.3f} {:.3f} {:.3f} {:.3f}'.format(*max_act_grads))
+                            grad_norms = []
+                            act_grad_norms = []
+                            act_norms = []
+                            weight_norms = []
+                            max_weights = []
+                            max_acts = []
+                            max_grads = []
+                            max_act_grads = []
+
+                        if args.L4 > 0 and args.L3 == 0:  #L2 penalty for second order gradient size
+                            params = [model.conv1.weight, model.conv2.weight, model.linear1.weight, model.linear2.weight]
+                            grads = torch.autograd.grad(loss, params, create_graph=True)
+
+                            grads_sum = 0
+                            for g in grads:
+                                #grads_sum += torch.abs(g).sum()
+                                grads_sum += g.pow(2).sum()
+                            grads2 = torch.autograd.grad(grads_sum, params, create_graph=True)
+
+                            g2_norm = 0
+                            for g2 in grads2:
+                                #g2_norm += g2.norm(p=2)
+                                g2_norm += g2.pow(2).sum()
+                            g2_norm = args.L4 * g2_norm
+
+                            g2_norm.backward(retain_graph=False)
+
+                        if args.grad_clip > 0:
+                            for n, p in model.named_parameters():
+                                p.grad.data.clamp_(-args.grad_clip, args.grad_clip)
+
+                        if args.train_w_max:
+                            w_max1_grad = torch.sum(model.conv1.weight.grad[model.conv1.weight >= model.w_max1])  #sum of conv1 weight gradients for all weights above threshold
+                            w_min1_grad = torch.sum(model.conv1.weight.grad[model.conv1.weight <= model.w_min1])
+                            #TODO: finish implementing moving avg
+                            #w_max1_grad_sum += w_max1_grad
+                            #w_max1_grad_avg = w_max1_grad_sum / (i + 1)
+                            #w_max1_grad = 0.8 * w_max1_grad_avg + 0.2 * w_max1_grad
+
+                            model.w_min1.data = model.w_min1.data - args.LR_w_max * w_min1_grad
+                            model.w_max1.data = model.w_max1.data - args.LR_w_max * w_max1_grad
+
+                            #model.w_min1.data.clamp_(-100, -0.01)
+                            #model.w_max1.data.clamp_(0.01, 100)
+
+                            #model.w_max1.grad += w_max1_grad
+                            #model.w_min1.grad += w_min1_grad
+
+                            if args.L2_w_max > 0:
+                                L2_grad = model.w_max1.grad.data.item()
+                                if False and model.w_min1.grad is not None:
+                                    model.w_min1.grad.data.clamp_(-1, 1)
+                                    model.w_max1.grad.data.clamp_(-1, 1)
+
+                                model.w_min1.data = model.w_min1.data - args.LR_w_max * model.w_min1.grad.data
+                                model.w_max1.data = model.w_max1.data - args.LR_w_max * model.w_max1.grad.data
+
+                                model.w_max1.grad.data[:] = 0
+                                model.w_min1.grad.data[:] = 0
+
+                                #model.w_max1.grad.data += w_max1_grad
+                                #model.w_min1.grad.data += w_min1_grad
+                            else:
+                                L2_grad = 0
+                        if False and i == 0:
+                            print('\n\n\nWeights before update:\n{}\n{}\n{}\n{}\n'.format(
+                                    model.conv1.weight.detach().cpu().numpy()[0, 0, :2], model.conv2.weight.detach().cpu().numpy()[0, 0, :2],
+                                    model.linear1.weight.detach().cpu().numpy()[0, :10], model.linear2.weight.detach().cpu().numpy()[0, :10]))
+
+                        optimizer.step()
+
+                        if False and i == 0:
+                            print('\n\n\nWeights after update:\n{}\n{}\n{}\n{}\n'.format(
+                                    model.conv1.weight.detach().cpu().numpy()[0, 0, :2], model.conv2.weight.detach().cpu().numpy()[0, 0, :2],
+                                    model.linear1.weight.detach().cpu().numpy()[0, :10], model.linear2.weight.detach().cpu().numpy()[0, :10]))
+
+                        if args.w_max1 > 0:
+                            if args.train_w_max:
+                                model.conv1.weight.data = torch.where(model.conv1.weight > model.w_max1, model.w_max1, model.conv1.weight)
+                                model.conv1.weight.data = torch.where(model.conv1.weight < model.w_min1, model.w_min1, model.conv1.weight)
+                            else:
+                                model.conv1.weight.data.clamp_(-args.w_max1, args.w_max1)
+
+                        if args.w_max2 > 0:
+                            model.conv2.weight.data.clamp_(-args.w_max2, args.w_max2)
+
+                        if args.w_max3 > 0:
+                            model.linear1.weight.data.clamp_(-args.w_max3, args.w_max3)
+                            model.linear1.weight.data.clamp_(-args.w_max3, args.w_max3)
+
+                        if args.w_max4 > 0:
+                            model.linear2.weight.data.clamp_(-args.w_max4, args.w_max4)
+
+                        pred = output.data.max(1)[1]
+                        acc = pred.eq(label.data).cpu().sum().numpy() * 100.0 / args.batch_size
+                        tr_accuracies.append(acc)
+
+                    tr_acc = np.mean(tr_accuracies, dtype=np.float64)
+
+                    model.eval()
+                    if args.split:
+                        args.current1 = args.current2 = args.current3 = args.current4 = args.test_current
+                        args.layer_currents = [args.current1, args.current2, args.current3, args.current4]
+                        if epoch == 0:
+                            print('*********************** Setting Test Current to', args.test_current, 'currents:', args.current1, args.current2, args.current3, args.current4)
+
+                    #print('\n\n\nWeights after update:\n{}\n{}\n{}\n{}\n'.format(model.conv1.weight.data.detach().cpu().numpy()[0, 0, :2],
+                            #model.conv2.weight.data.detach().cpu().numpy()[0, 0, :2], model.linear1.weight.data.detach().cpu().numpy()[0, :10], model.linear2.weight.data.detach().cpu().numpy()[0, :10]))
+
+                    with torch.no_grad():
+                        for i in range(num_test_batches):
+                            input = test_inputs[i * args.batch_size:(i + 1) * args.batch_size]
+                            label = test_labels[i * args.batch_size:(i + 1) * args.batch_size]
+                            output = model(input, epoch, i)
+                            pred = output.data.max(1)[1]
+                            te_acc = pred.eq(label.data).cpu().sum().numpy() * 100.0 / args.batch_size
+                            te_accuracies.append(te_acc)
+
+                        if args.print_stats:
+                            p = []
+                            input_sp = []
+                            nsr = []
+                            for ind in range(args.num_layers):
+                                p.append(np.nanmean(model.power[ind]))
+                                input_sp.append(np.nanmean(model.input_sparsity[ind]))
+                                nsr.append(np.nanmean(model.nsr[ind]))
+
+                            avg_input_sparsity = np.nanmean(input_sp)
+                            input_sparsity_string = '  act spars {:.2f} ({:.2f} {:.2f} {:.2f} {:.2f})'.format(avg_input_sparsity, *input_sp)
+                            avg_nsr = np.nanmean(nsr)
+                            noise_string = '  avg noise {:.3f} ({:.2f} {:.2f} {:.2f} {:.2f})'.format(avg_nsr, *nsr)
+                            total_power = np.nansum(p)
+                            power_string = '  Power {:.2f}mW ({:.2f} {:.2f} {:.2f} {:.2f})'.format(total_power, *p)
+
+                    te_acc = np.mean(te_accuracies, dtype=np.float64)
+
+                    if args.distort_w_test:
+                        noise_levels = [0.02, 0.04, 0.06, 0.08, 0.1, 0.12]
+                        #noise_levels = [0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15, 0.2, 0.3]
+                        noise_levels = [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
+                        avg_te_acc_dist = test_distortion(model, args, val_loader=(test_inputs, test_labels), mode='weights', vars=noise_levels)
+                        te_acc_dist_string = ' ({:.2f})'.format(avg_te_acc_dist)
+
+                    if args.train_act_max:
+                        clip_string = '  act_max {:.2f} {:.2f} {:.2f}'.format(model.act_max1.item(), model.act_max2.item(), model.act_max3.item())
+                        act_max1_values.append(model.act_max1.item())
+                        act_max2_values.append(model.act_max2.item())
+                        act_max3_values.append(model.act_max3.item())
+                    if args.train_w_max:
+                        clip_string += '  w_min/max {:.3f} {:.3f}'.format(model.w_min1.item(), model.w_max1.item())
+                        w_max_values.append(model.w_max1.item())
+                        w_min_values.append(model.w_min1.item())
+
+                    if args.q_a1 > 0 or args.q_a2 > 0 or args.q_a3 > 0 or args.q_a4 > 0:
+                        act_q_string = '  q {:d} {:d} {:d} {:d}'.format(args.q_a1, args.q_a2, args.q_a3, args.q_a4)
                     else:
-                        prev_best_acc = best_accuracy
+                        act_q_string = ''
 
-            print('\n\nSimulation {:d}  {} {}  Best Accuracy: {:.2f} (epoch {})\n\n'.format(s, args.tag+args.var_name, var, best_accuracy, best_epoch))
-            best_accuracies.append(best_accuracy)
+                    if args.print_stats:
+                        for n, p in model.named_parameters():  # calcualte weight sparsity as the smallest 2% of all weights by magnitude
+                            if 'weight' in n and ('linear' in n or 'conv' in n):
+                                w_sparsity.append(p[torch.abs(p) > 0.02*(p.max() - p.min())].numel() / p.numel())
+                        avg_w_sparsity = np.mean(w_sparsity, dtype=np.float64)
+                        w_sparsity_string = '  w spars {:.2f} ({:.2f} {:.2f} {:.2f} {:.2f})'.format(avg_w_sparsity, *w_sparsity)
+
+                        print('{}\tEpoch {:>3d}  Train {:.2f}  Test {:.2f}{}  LR {:.4f}{}{}{}{}{}{}{}'.format(
+                            str(datetime.now())[:-7], epoch, tr_acc, te_acc, te_acc_dist_string, lr, clip_string, power_string,
+                            noise_string, w_sparsity_string, input_sparsity_string, act_q_string, norm_string_reduced))
+                    else:
+                        print('{}\tEpoch {:>3d}  Train {:.2f}  Test {:.2f}  LR {:.4f}'.format(str(datetime.now())[:-7], epoch, tr_acc, te_acc, lr))
+
+                    #print('Epoch {:>3d}  Train {:.2f}  Test {:.2f}  {}\n\t\t\t\t{}\n'.format(epoch, tr_acc, te_acc, norm_string, max_string))
+                    #print('Epoch {:>3d}  Train {:.2f}  Test {:.2f}  {} {}'.format(epoch, tr_acc, te_acc, norm_string, power_string))
+
+                    if te_acc > best_accuracy:
+                    #if avg_te_acc_dist > best_accuracy_dist:
+                        if saved:
+                            os.remove(args.checkpoint_dir + '/model_epoch_{:d}_acc_{:.2f}.pth'.format(best_epoch, saved_accuracy))
+
+                        if epoch > init_epoch + 10:
+                            if create_dir:
+                                utils.saveargs(args)
+                                create_dir = False
+                            if s == 0:
+                                saved_accuracy = te_acc
+                                torch.save(model.state_dict(), args.checkpoint_dir + '/model_epoch_{:d}_acc_{:.2f}.pth'.format(epoch, te_acc))
+                                best_saved_acc = te_acc
+                                saved = True
+
+                        best_accuracy = te_acc
+                        best_accuracy_dist = avg_te_acc_dist
+                        best_epoch = epoch
+                        if args.print_stats:
+                            best_nsr = avg_nsr
+                            best_input_sparsity = avg_input_sparsity
+                            best_w_sparsity = avg_w_sparsity
+                            best_power_string = power_string
+                            best_noise_string = noise_string
+                            best_input_sparsity_string = input_sparsity_string
+                            best_w_sparsity_string = w_sparsity_string
+                            best_accuracy_dist_string = te_acc_dist_string
+                            best_power = total_power
+
+                    if epoch != 0 and epoch % args.early_stop_after == 0:
+                        if best_accuracy <= prev_best_acc:
+                            break
+                        else:
+                            prev_best_acc = best_accuracy
+
+                print('\n\nSimulation {:d}  {} {}  Best Accuracy: {:.2f} (epoch {})\n\n'.format(s, args.tag+args.var_name, var, best_accuracy, best_epoch))
+                best_accuracies.append(best_accuracy)
+                if args.print_stats:
+                    print('\n\nCurrent {}  {} {}  Simulation {:d} Best Accuracy: {:.2f}{} (epoch {:d}){}{}{}\n\n'.format(
+                        args.current1, args.tag+args.var_name, var, s, best_accuracy, best_accuracy_dist_string, best_epoch, best_power_string, best_noise_string, best_w_sparsity_string, best_input_sparsity_string))
+
+                    best_accuracies_dist.append(best_accuracy_dist)
+                    best_powers.append(best_power)
+                    best_noises.append(best_nsr)
+                    best_act_sparsities.append(best_input_sparsity)
+                    best_w_sparsities.append(best_w_sparsity)
+
+                if args.train_w_max:
+                    print('\n\nw_max1 values:\n\n')
+                    for v in w_max_values:
+                        print('{:.3f}'.format(v), end=', ')
+                    print('\n\nw_min1 values:\n\n')
+                    for v in w_min_values:
+                        print('{:.3f}'.format(v), end=', ')
+                    print('\n\n')
+
+                if args.train_act_max:
+                    print('\n\nact_max1 values:\n\n')
+                    for v in act_max1_values:
+                        print('{:.3f}'.format(v), end=', ')
+                    print('\n\nact_max2 values:\n\n')
+                    for v in act_max2_values:
+                        print('{:.3f}'.format(v), end=', ')
+                    print('\n\nact_max3 values:\n\n')
+                    for v in act_max3_values:
+                        print('{:.3f}'.format(v), end=', ')
+                    print('\n\n')
+
+            if args.distort_w_test and args.var_name != '':  # ugly...
+                continue
+
+            results[var] += best_accuracies
             if args.print_stats:
-                print('\n\nCurrent {}  {} {}  Simulation {:d} Best Accuracy: {:.2f}{} (epoch {:d}){}{}{}\n\n'.format(
-                    args.current1, args.tag+args.var_name, var, s, best_accuracy, best_accuracy_dist_string, best_epoch, best_power_string, best_noise_string, best_w_sparsity_string, best_input_sparsity_string))
+                noise_results[var] += best_noises
+                power_results[var] += best_powers
+                act_sparsity_results[var] += best_act_sparsities
+                w_sparsity_results[var] += best_w_sparsities
 
-                best_accuracies_dist.append(best_accuracy_dist)
-                best_powers.append(best_power)
-                best_noises.append(best_nsr)
-                best_act_sparsities.append(best_input_sparsity)
-                best_w_sparsities.append(best_w_sparsity)
-
-            if args.train_w_max:
-                print('\n\nw_max1 values:\n\n')
-                for v in w_max_values:
-                    print('{:.3f}'.format(v), end=', ')
-                print('\n\nw_min1 values:\n\n')
-                for v in w_min_values:
-                    print('{:.3f}'.format(v), end=', ')
-                print('\n\n')
-
-            if args.train_act_max:
-                print('\n\nact_max1 values:\n\n')
-                for v in act_max1_values:
-                    print('{:.3f}'.format(v), end=', ')
-                print('\n\nact_max2 values:\n\n')
-                for v in act_max2_values:
-                    print('{:.3f}'.format(v), end=', ')
-                print('\n\nact_max3 values:\n\n')
-                for v in act_max3_values:
-                    print('{:.3f}'.format(v), end=', ')
-                print('\n\n')
-
-        if args.distort_w_test and args.var_name != '':  # ugly...
-            continue
-
-        results[var] += best_accuracies
-        if args.print_stats:
-            noise_results[var] += best_noises
-            power_results[var] += best_powers
-            act_sparsity_results[var] += best_act_sparsities
-            w_sparsity_results[var] += best_w_sparsities
-
-        if args.distort_w_test:
-            print('\n\nBest accuracies for current {}  {} {} {} powers {}  noises {}\n\n'.format(
-                args.current1, args.var_name, var, ['{:.2f} ({:.2f})'.format(x, y) for x, y in zip(best_accuracies, best_accuracies_dist)],
-                ['{:.2f}'.format(y) for y in best_powers], ['{:.3f}'.format(y) for y in best_noises]))
-
-            results_dist[var] += best_accuracies_dist
-
-            fmt = '{} {}  {} ({}) mean {:.2f} ({:.2f})  max {:.2f}  min {:.2f}  w spars {:.2f}{}  act spars {:.2f}{}  power {:.2f}mW{}  noise {}  mean {:.3f}'.format(
-                args.var_name, str(var), [float('{:.2f}'.format(x)) for x in results[var]], [float('{:.2f}'.format(x)) for x in results_dist[var]],
-                np.mean(results[var]), np.mean(results_dist[var]), np.max(results[var]), np.min(results[var]), np.mean(w_sparsity_results[var]), best_w_sparsity_string,
-                np.mean(act_sparsity_results[var]), best_input_sparsity_string, np.mean(power_results[var]), best_power_string, [float('{:.2f}'.format(x)) for x in noise_results[var]],
-                np.mean(noise_results[var]))
-        else:
-            if args.current1 > 0 or args.current2 > 0 or args.current3 > 0 or args.current4 > 0:
+            if args.distort_w_test:
                 print('\n\nBest accuracies for current {}  {} {} {} powers {}  noises {}\n\n'.format(
-                    args.current1, args.var_name, var, ['{:.2f}'.format(x) for x in best_accuracies],
+                    args.current1, args.var_name, var, ['{:.2f} ({:.2f})'.format(x, y) for x, y in zip(best_accuracies, best_accuracies_dist)],
                     ['{:.2f}'.format(y) for y in best_powers], ['{:.3f}'.format(y) for y in best_noises]))
 
-                fmt = '{} {}  {} mean {:.2f}  max {:.2f}  min {:.2f}  w spars {:.2f}{}  act spars {:.2f}{}  power {:.2f}mW{}  noise {}  mean {:.3f}'.format(
-                    args.var_name, str(var), [float('{:.2f}'.format(x)) for x in results[var]], np.mean(results[var]), np.max(results[var]), np.min(results[var]),
-                    np.mean(w_sparsity_results[var]), best_w_sparsity_string, np.mean(act_sparsity_results[var]), best_input_sparsity_string,
-                    np.mean(power_results[var]), best_power_string, [float('{:.2f}'.format(x)) for x in noise_results[var]], np.mean(noise_results[var]))
+                results_dist[var] += best_accuracies_dist
 
+                fmt = '{} {}  {} ({}) mean {:.2f} ({:.2f})  max {:.2f}  min {:.2f}  w spars {:.2f}{}  act spars {:.2f}{}  power {:.2f}mW{}  noise {}  mean {:.3f}'.format(
+                    args.var_name, str(var), [float('{:.2f}'.format(x)) for x in results[var]], [float('{:.2f}'.format(x)) for x in results_dist[var]],
+                    np.mean(results[var]), np.mean(results_dist[var]), np.max(results[var]), np.min(results[var]), np.mean(w_sparsity_results[var]), best_w_sparsity_string,
+                    np.mean(act_sparsity_results[var]), best_input_sparsity_string, np.mean(power_results[var]), best_power_string, [float('{:.2f}'.format(x)) for x in noise_results[var]],
+                    np.mean(noise_results[var]))
             else:
-                '''
-                print('\n\nBest accuracies for current {}  {} {} {} powers {}\n\n'.format(
-                    args.current1, args.var_name, var, ['{:.2f}'.format(x) for x in best_accuracies],
-                    ['{:.2f}'.format(y) for y in best_powers]))
+                if args.current1 > 0 or args.current2 > 0 or args.current3 > 0 or args.current4 > 0:
+                    print('\n\nBest accuracies for current {}  {} {} {} powers {}  noises {}\n\n'.format(
+                        args.current1, args.var_name, var, ['{:.2f}'.format(x) for x in best_accuracies],
+                        ['{:.2f}'.format(y) for y in best_powers], ['{:.3f}'.format(y) for y in best_noises]))
 
-                fmt = '{} {}  {} mean {:.2f}  max {:.2f}  min {:.2f}  w spars {:.2f}{}  act spars {:.2f}{}  power {:.2f}mW{}'.format(
-                    args.var_name, str(var), [float('{:.2f}'.format(x)) for x in results[var]], np.mean(results[var]), np.max(results[var]),
-                    np.min(results[var]), np.mean(w_sparsity_results[var]), best_w_sparsity_string, np.mean(act_sparsity_results[var]),
-                    best_input_sparsity_string, np.mean(power_results[var]), best_power_string)
-                '''
-                print('\n\nBest accuracies for {} {} {}\n\n'.format(args.var_name, var, ['{:.2f}'.format(x) for x in best_accuracies]))
+                    fmt = '{} {}  {} mean {:.2f}  max {:.2f}  min {:.2f}  w spars {:.2f}{}  act spars {:.2f}{}  power {:.2f}mW{}  noise {}  mean {:.3f}'.format(
+                        args.var_name, str(var), [float('{:.2f}'.format(x)) for x in results[var]], np.mean(results[var]), np.max(results[var]), np.min(results[var]),
+                        np.mean(w_sparsity_results[var]), best_w_sparsity_string, np.mean(act_sparsity_results[var]), best_input_sparsity_string,
+                        np.mean(power_results[var]), best_power_string, [float('{:.2f}'.format(x)) for x in noise_results[var]], np.mean(noise_results[var]))
 
-                fmt = '{} {:<8}  {} mean {:>4.2f}  max {:>4.2f}  min {:>4.2f}'.format(
-	                args.var_name, str(var), [float('{:.2f}'.format(x)) for x in results[var]], np.mean(results[var]), np.max(results[var]), np.min(results[var]))
+                else:
+                    '''
+                    print('\n\nBest accuracies for current {}  {} {} {} powers {}\n\n'.format(
+                        args.current1, args.var_name, var, ['{:.2f}'.format(x) for x in best_accuracies],
+                        ['{:.2f}'.format(y) for y in best_powers]))
+    
+                    fmt = '{} {}  {} mean {:.2f}  max {:.2f}  min {:.2f}  w spars {:.2f}{}  act spars {:.2f}{}  power {:.2f}mW{}'.format(
+                        args.var_name, str(var), [float('{:.2f}'.format(x)) for x in results[var]], np.mean(results[var]), np.max(results[var]),
+                        np.min(results[var]), np.mean(w_sparsity_results[var]), best_w_sparsity_string, np.mean(act_sparsity_results[var]),
+                        best_input_sparsity_string, np.mean(power_results[var]), best_power_string)
+                    '''
+                    print('\n\nBest accuracies for {} {} {}\n\n'.format(args.var_name, var, ['{:.2f}'.format(x) for x in best_accuracies]))
 
-
-        print(fmt)
-        currents[current].append(fmt)
-        print('\n\n')
-        if not saved or create_dir:
-            utils.saveargs(args)
-            create_dir = False
-        output_file = args.checkpoint_dir + 'results_current_{}_{}.txt'.format(args.current, args.var_name)
-        f = open(output_file, 'w')
-        for cur in currents:
-            print('\nCurrent {}nA:'.format(cur))
-            f.write('\nCurrent {}nA\n'.format(cur))
-            for res in currents[cur]:
-                print(res)
-                f.write(res + '\n')
-        print('\n\n\n')
-        f.close()
+                    fmt = '{} {:<8}  {} mean {:>4.2f}  max {:>4.2f}  min {:>4.2f}'.format(
+                            args.var_name, str(var), [float('{:.2f}'.format(x)) for x in results[var]], np.mean(results[var]), np.max(results[var]), np.min(results[var]))
 
 
+            print(fmt)
+            currents[current].append(fmt)
+            print('\n\n')
+            if not saved or create_dir:
+                utils.saveargs(args)
+                create_dir = False
+            output_file = args.checkpoint_dir + 'results_current_{}_{}.txt'.format(args.current, args.var_name)
+            f = open(output_file, 'w')
+            for cur in currents:
+                print('\nCurrent {}nA:'.format(cur))
+                f.write('\nCurrent {}nA\n'.format(cur))
+                for res in currents[cur]:
+                    print(res)
+                    f.write(res + '\n')
+            print('\n\n\n')
+            f.close()
 
 
-''' 
-orig_params = []
-for n, p in model.named_parameters():
-    if n == 'conv1.weight':
-        print('\n\nConv1 Weights (p) before:                 {}'.format(p.data.detach().cpu().numpy()[0, 0, :1]))
-        print('Conv1 Weights (p.clone()) before:         {}'.format(p.clone().data.detach().cpu().numpy()[0, 0, :1]))
-        print('Conv1 Weights (conv1.weight.data) before: {}\n\n'.format(model.conv1.weight.data.detach().cpu().numpy()[0, 0, :1]))
-    orig_params.append(p.clone())
 
-model.conv1.weight.data.add_(torch.cuda.FloatTensor(model.conv1.weight.size()).uniform_(-0.05, 0.05))
 
-for orig_p, (n, p) in zip(orig_params, model.named_parameters()):
-    if n == 'conv1.weight':
-        print('\n\nConv1 Weights (p) before:                 {}'.format(p.data.detach().cpu().numpy()[0, 0, :1]))
-        print('Conv1 Weights (conv1.weight.data) before: {}'.format(model.conv1.weight.data.detach().cpu().numpy()[0, 0, :1]))
-        print('Conv1 Weights (orig_p) before:            {}'.format(orig_p.data.detach().cpu().numpy()[0, 0, :1]))
+    ''' 
+    orig_params = []
+    for n, p in model.named_parameters():
+        if n == 'conv1.weight':
+            print('\n\nConv1 Weights (p) before:                 {}'.format(p.data.detach().cpu().numpy()[0, 0, :1]))
+            print('Conv1 Weights (p.clone()) before:         {}'.format(p.clone().data.detach().cpu().numpy()[0, 0, :1]))
+            print('Conv1 Weights (conv1.weight.data) before: {}\n\n'.format(model.conv1.weight.data.detach().cpu().numpy()[0, 0, :1]))
+        orig_params.append(p.clone())
+    
+    model.conv1.weight.data.add_(torch.cuda.FloatTensor(model.conv1.weight.size()).uniform_(-0.05, 0.05))
+    
+    for orig_p, (n, p) in zip(orig_params, model.named_parameters()):
+        if n == 'conv1.weight':
+            print('\n\nConv1 Weights (p) before:                 {}'.format(p.data.detach().cpu().numpy()[0, 0, :1]))
+            print('Conv1 Weights (conv1.weight.data) before: {}'.format(model.conv1.weight.data.detach().cpu().numpy()[0, 0, :1]))
+            print('Conv1 Weights (orig_p) before:            {}'.format(orig_p.data.detach().cpu().numpy()[0, 0, :1]))
+    
+        p = orig_p.clone()
+    
+        if n == 'conv1.weight':
+            print('\nConv1 Weights (p) after:                  {}'.format(p.data.detach().cpu().numpy()[0, 0, :1]))
+            print('Conv1 Weights (conv1.weight.data) after:  {}'.format(model.conv1.weight.data.detach().cpu().numpy()[0, 0, :1]))
+            print('Conv1 Weights (orig_p) after:             {}'.format(orig_p.data.detach().cpu().numpy()[0, 0, :1]))
+    
+    '''
 
-    p = orig_p.clone()
 
-    if n == 'conv1.weight':
-        print('\nConv1 Weights (p) after:                  {}'.format(p.data.detach().cpu().numpy()[0, 0, :1]))
-        print('Conv1 Weights (conv1.weight.data) after:  {}'.format(model.conv1.weight.data.detach().cpu().numpy()[0, 0, :1]))
-        print('Conv1 Weights (orig_p) after:             {}'.format(orig_p.data.detach().cpu().numpy()[0, 0, :1]))
-
-'''
+if __name__ == '__main__':
+    main()
