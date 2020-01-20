@@ -837,29 +837,36 @@ def get_var_and_acc_lists(current):
 
 
 def main():
+    # Prevent overwriting global variables
     global args
     global model
 
     args = parse_args()
 
+    # Determine determinism
     if args.seed is not None:
+        # Results will be deterministic
         random.seed(args.seed)
         torch.manual_seed(args.seed)
         torch.backends.cudnn.deterministic = True
         print('\n\n****** You have chosen to seed training. This will turn on the CUDNN deterministic setting, and training will be SLOW! ******\n\n')
     else:
+        # Results will be non-deterministic
         torch.backends.cudnn.benchmark = True
 
+    # Use specific GPU is specified, otherwise use all GPUs
     if args.gpu is not None:
         os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
 
     np.set_printoptions(precision=4, linewidth=120, suppress=True)
 
+    # Load CIFAR 10 data
     train_inputs, train_labels, test_inputs, test_labels = utils.load_cifar(args)
 
     num_train_batches = desired_num_train_examples // args.batch_size
     num_test_batches = desired_num_test_examples // args.batch_size
 
+    # Determine individual layer learning rates
     if args.LR_1 == 0:
         args.LR_1 = args.LR
     if args.LR_2 == 0:
@@ -869,20 +876,26 @@ def main():
     if args.LR_4 == 0:
         args.LR_4 = args.LR
 
+    # Store results for the different currents in this dictionary
     currents = {}
     if args.var_name == 'current':
+        # Perform grid / sweep search of currents
         current_vars = default_current_vars
     else:
         current_vars = [args.current]
 
     for current in current_vars:
         print('\n\n****************** Current {} ********************\n\n'.format(current))
+        # Store all results for a specific current in this list. One variable might be varied and several simulations
+        # might be carried out for each variable value.
         currents[current] = []
         args.current = current
 
+        # Determine individual layer currents
         if args.current > 0:
             args.current1 = args.current2 = args.current3 = args.current4 = args.current
 
+        # Determin whether to use current during training
         if args.split:
             args.test_current = args.current
             args.train_current = 0
@@ -891,6 +904,7 @@ def main():
 
         args.layer_currents = [args.current1, args.current2, args.current3, args.current4]
 
+        # Determine individual layer margins (not currently used anywhere)
         if args.distort_w_test:
             if args.current1 > 0:
                 margin1 = args.w_scale * 0.1 / args.current1
@@ -903,6 +917,7 @@ def main():
                 margin3 = args.w_scale * 0.1
                 margin4 = args.w_scale * 0.1
 
+        # Store results for the different variable values here
         results = {}
         results_dist = {}
         power_results = {}
@@ -910,14 +925,18 @@ def main():
         act_sparsity_results = {}
         w_sparsity_results = {}
 
+        # Perform grid / sweep search of values for specified variable
         var_list, acc_lists = get_var_and_acc_lists(current)
         for var in var_list:
             if args.var_name != '':
                 print('\n\n********** Setting {} to {} **********\n\n'.format(args.var_name, var))
                 setattr(args, args.var_name, var)
 
+            # Determine individual layer activation quantization bits
             if args.q_a > 0:
                 args.q_a1 = args.q_a2 = args.q_a3 = args.q_a4 = args.q_a
+
+            # Determine individual layer L2 coefficients
             if args.L2 > 0:
                 #args.L2_1 = args.L2_2 = args.L2_3 = args.L2_4 = args.L2
                 #args.L2_1 = args.L2_2 = args.L2_3 = args.L2_4 = args.L2 * math.sqrt(args.width)
@@ -927,6 +946,7 @@ def main():
                     args.L2_1 = args.L2_2 = args.L2_3 = args.L2_4 = args.L2
                 print('\n\nSetting L2 in all layers to {}\n\n'.format(args.L2_1))
 
+            # Determine individual layer L1 coefficients
             if args.L1 > 0:
                 args.L1_1 = args.L1_2 = args.L1_3 = args.L1_4 = args.L1
 
