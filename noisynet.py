@@ -145,6 +145,11 @@ feature_parser.add_argument('--no-plot_power', dest='plot_power', action='store_
 parser.set_defaults(plot_power=False)
 
 feature_parser = parser.add_mutually_exclusive_group(required=False)
+feature_parser.add_argument('--learn_power_distribution', dest='learn_power_distribution', action='store_true')
+feature_parser.add_argument('--no-learn_power_distribution', dest='learn_power_distribution', action='store_false')
+parser.set_defaults(debug_noise=False)
+
+feature_parser = parser.add_mutually_exclusive_group(required=False)
 feature_parser.add_argument('--weightnorm', dest='weightnorm', action='store_true')
 feature_parser.add_argument('--no-weightnorm', dest='weightnorm', action='store_false')
 parser.set_defaults(weightnorm=False)
