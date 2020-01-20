@@ -28,6 +28,12 @@ import scipy.io
 ################################################################################
 
 
+desired_num_train_examples = 50000
+desired_num_test_examples = 10000
+
+default_current_vars = [1, 3, 5, 10, 20, 50, 100]
+
+
 #CUDA_LAUNCH_BLOCKING=1
 
 
@@ -739,8 +745,8 @@ def main():
 
     train_inputs, train_labels, test_inputs, test_labels = utils.load_cifar(args)
 
-    num_train_batches = 50000 // args.batch_size
-    num_test_batches = 10000 // args.batch_size
+    num_train_batches = desired_num_train_examples // args.batch_size
+    num_test_batches = desired_num_test_examples // args.batch_size
 
     if args.LR_1 == 0:
         args.LR_1 = args.LR
@@ -753,7 +759,7 @@ def main():
 
     currents = {}
     if args.var_name == 'current':
-        current_vars = [1, 3, 5, 10, 20, 50, 100]
+        current_vars = default_current_vars
     else:
         current_vars = [args.current]
 
