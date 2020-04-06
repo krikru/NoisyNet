@@ -607,6 +607,8 @@ class Net(nn.Module):
             if (epoch == 0 and i == 0) or args.plot:
                 print('\n\n\nBatch size', list(self.input.size())[0], '\n\n\n')
 
+            tag = args.tag
+
             if args.plot_basic:
                 names = ['input', 'weights', 'vmm']
             else:
@@ -621,24 +623,27 @@ class Net(nn.Module):
                         block_size = str(args.block_size)
                     names = ['input', 'weights', 'vmm', 'vmm diff', 'source ' + block_size, 'source diff ' + block_size]
 
-                args.tag += '_full'
+                tag += '_full'
 
             if args.merge_bn:
                 names.append('bias')
-                args.tag += '_merged_bn'
+                tag += '_merged_bn'
 
             if args.plot_noise:
                 names.extend(['sigmas', 'noise', 'noise/range'])
-                args.tag += '_noise'
+                tag += '_noise'
 
             if args.plot_power:
                 names.append('power')
-                args.tag += '_power'
+                tag += '_power'
 
             if args.normalize:
-                args.tag += '_norm'
+                tag += '_norm'
 
-            args.tag += '_bs_' + str(args.batch_size)
+            tag += '_bs_' + str(args.batch_size)
+
+            if tag.startswith('_'):
+                tag = tag[1:]
 
             names.append('pre-activation')
 
@@ -674,7 +679,7 @@ class Net(nn.Module):
                 var_name = args.var_name
 
                 plot_layers(num_layers=len(layers), models=[args.checkpoint_dir], epoch=epoch, i=i, layers=layers,
-                            names=names, var=var_name, vars=[var_], infos=info, pctl=args.pctl, acc=acc, tag=args.tag, normalize=args.normalize)
+                            names=names, var=var_name, vars=[var_], infos=info, pctl=args.pctl, acc=acc, tag=tag, normalize=args.normalize)
 
             if args.write and not self.training:
                 #scipy.io.savemat('chip_plots/convnet_first_layer_q4_act_1_acc_{:.2f}.mat'.format(acc), mdict={names[1]: arrays[1], names[2]: arrays[2]})
