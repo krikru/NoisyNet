@@ -929,12 +929,12 @@ for current in current_vars:
         else:
             tag = args.tag
 
-        args.checkpoint_dir = os.path.join('results/', tag + 'current-' + str(args.current1) + '-' + str(args.current2) + '-' + str(args.current3) + '-' + str(args.current4) +
+        args.checkpoint_dir = os.path.join('results/', datetime.now().strftime('%Y-%m-%d_%H-%M-%S') + '_' + tag + 'current-' + str(args.current1) + '-' + str(args.current2) + '-' + str(args.current3) + '-' + str(args.current4) +
             '_L3-' + str(args.L3) + '_L3_act-' + str(args.L3_act) + '_L2-' + str(args.L2_1) + '-' + str(args.L2_2) + '-' + str(args.L2_3) + '-' + str(args.L2_4) +
             '_actmax-' + str(args.act_max1) + '-' + str(args.act_max2) + '-' + str(args.act_max3) +
             '_w_max1-' + str(args.w_max1) + '-' + str(args.w_max2) + '-' + str(args.w_max3) + '-' + str(args.w_max4) + '_bn-' + str(args.batchnorm) + '_LR-' + str(args.LR) + '_' +
-            'grad_clip-' + str(args.grad_clip) + '_' +
-            datetime.now().strftime('%Y-%m-%d_%H-%M-%S/'))
+            'grad_clip-' + str(args.grad_clip) +
+            '/')
 
         for s in range(args.num_sims):
 
