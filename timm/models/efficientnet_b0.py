@@ -510,7 +510,7 @@ class DepthwiseSeparableConv(nn.Module):
         self.act2 = act_layer(inplace=True) if self.has_pw_act else nn.Identity()
 
     def forward(self, x):
-        residual = x
+        shortcut_connection = x
 
         x = self.conv_dw(x)
         x = self.bn1(x)
@@ -526,7 +526,7 @@ class DepthwiseSeparableConv(nn.Module):
         if self.has_residual:
             if self.drop_connect_rate > 0.:
                 x = drop_connect(x, self.training, self.drop_connect_rate)
-            x += residual
+            x += shortcut_connection
         return x
 
 
@@ -568,7 +568,7 @@ class InvertedResidual(nn.Module):
         self.bn3 = norm_layer(out_chs, **norm_kwargs)
 
     def forward(self, x):
-        residual = x
+        shortcut_connection = x
 
         # Point-wise expansion
         x = self.conv_pw(x)
@@ -591,7 +591,7 @@ class InvertedResidual(nn.Module):
         if self.has_residual:
             if self.drop_connect_rate > 0.:
                 x = drop_connect(x, self.training, self.drop_connect_rate)
-            x += residual
+            x += shortcut_connection
 
         return x
 
@@ -629,7 +629,7 @@ class EdgeResidual(nn.Module):
         self.bn2 = norm_layer(out_chs, **norm_kwargs)
 
     def forward(self, x):
-        residual = x
+        shortcut_connection = x
 
         # Expansion convolution
         x = self.conv_exp(x)
@@ -647,7 +647,7 @@ class EdgeResidual(nn.Module):
         if self.has_residual:
             if self.drop_connect_rate > 0.:
                 x = drop_connect(x, self.training, self.drop_connect_rate)
-            x += residual
+            x += shortcut_connection
 
         return x
 

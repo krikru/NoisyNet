@@ -76,15 +76,15 @@ class BasicBlock(nn.Module):
             if self.offset:
                 x = distort_tensor(self, args, x, scale=args.offset * x.max(), stop=False)
 
-        residual = x
-        out = self.conv1(x)
+        shortcut_connection = x
+        residual = self.conv1(x)
 
         if args.plot:
-            get_layers(arrays, x, self.conv1.weight, out, stride=self.stride, layer='conv', basic=args.plot_basic, debug=args.debug)
+            get_layers(arrays, x, self.conv1.weight, residual, stride=self.stride, layer='conv', basic=args.plot_basic, debug=args.debug)
 
         if args.print_shapes:
             print('\nblock input:', list(x.shape))
-            print('conv1:', list(out.shape))
+            print('conv1:', list(residual.shape))
 
         if args.merge_bn:
             bias = self.bn1.bias.data.view(1, -1, 1, 1) - self.bn1.running_mean.data.view(1, -1, 1, 1) * \
@@ -101,36 +101,36 @@ class BasicBlock(nn.Module):
                 bias = bias.sign() * bias.abs().max() * (bias.abs() / bias.abs().max()) ** ((args.test_temp + 273.) / (args.temperature + 273.)) * args.scale_bias
 
 
-            out += bias
+            residual += bias
             if args.plot:
                 arrays.append([bias.half().detach().cpu().numpy()])
         else:
-            out = self.bn1(out)
+            residual = self.bn1(residual)
 
         if args.plot:
-            arrays.append([out.half().detach().cpu().numpy()])
+            arrays.append([residual.half().detach().cpu().numpy()])
 
-        out = self.relu(out)
+        residual = self.relu(residual)
 
         if args.distort_pre_act:
             if self.offset:
-                out = distort_tensor(self, args, out, scale=args.offset * self.quantize2.running_max, stop=True)
+                residual = distort_tensor(self, args, residual, scale=args.offset * self.quantize2.running_max, stop=True)
 
         if args.q_a > 0:
-            out = self.quantize2(out)
+            residual = self.quantize2(residual)
 
         if args.distort_act:
             if self.offset:
-                out = distort_tensor(self, args, out, scale=args.offset * out.max(), stop=True)
+                residual = distort_tensor(self, args, residual, scale=args.offset * residual.max(), stop=True)
 
-        conv2_input = out
-        out = self.conv2(out)
+        conv2_input = residual
+        residual = self.conv2(residual)
 
         if args.plot:
-            get_layers(arrays, conv2_input, self.conv2.weight, out, stride=1, layer='conv', basic=args.plot_basic, debug=args.debug)
+            get_layers(arrays, conv2_input, self.conv2.weight, residual, stride=1, layer='conv', basic=args.plot_basic, debug=args.debug)
 
         if args.print_shapes:
-            print('conv2:', list(out.shape))
+            print('conv2:', list(residual.shape))
 
         if args.merge_bn:
             bias = self.bn2.bias.data.view(1, -1, 1, 1) - self.bn2.running_mean.data.view(1, -1, 1, 1) * \
@@ -142,21 +142,21 @@ class BasicBlock(nn.Module):
                 #bias = bias.sign() * bias.abs() ** ((args.test_temp + 273.) / (args.temperature + 273.))
                 bias = bias.sign() * bias.abs().max() * (bias.abs() / bias.abs().max()) ** ((args.test_temp + 273.) / (args.temperature + 273.)) * args.scale_bias
 
-            out += bias
+            residual += bias
             if args.plot:
                 arrays.append([bias.half().detach().cpu().numpy()])
         else:
-            out = self.bn2(out)
+            residual = self.bn2(residual)
         #print('\n\nbn2 weights:\n', self.bn2.weight, '\n\nbn2 biases:\n', self.bn2.bias, '\n\nbn2 running mean:\n', self.bn2.running_mean,
                   #'\n\nbn2 running var:\n', self.bn2.running_var)
 
         if args.plot:
-            arrays.append([out.half().detach().cpu().numpy()])
+            arrays.append([residual.half().detach().cpu().numpy()])
 
         if self.downsample is not None:
-            residual = self.conv3(x)
+            shortcut_connection = self.conv3(x)
             if args.print_shapes:
-                print('conv3 (shortcut downsampling):', list(out.shape))
+                print('conv3 (shortcut downsampling):', list(residual.shape))
             if args.merge_bn:
                 bias = self.bn3.bias.data.view(1, -1, 1, 1) - self.bn3.running_mean.data.view(1, -1, 1, 1) * \
                        self.bn3.weight.data.view(1, -1, 1, 1) / torch.sqrt(self.bn3.running_var.data.view(1, -1, 1, 1) + args.eps)
@@ -167,15 +167,15 @@ class BasicBlock(nn.Module):
                     #bias = bias.sign() * bias.abs() ** ((args.test_temp + 273.) / (args.temperature + 273.))
                     bias = bias.sign() * bias.abs().max() * (bias.abs() / bias.abs().max()) ** ((args.test_temp + 273.) / (args.temperature + 273.)) * args.scale_bias
 
-                residual += bias
+                shortcut_connection += bias
             else:
-                residual = self.bn3(residual)
+                shortcut_connection = self.bn3(shortcut_connection)
 
-        out += residual
+        pre_act_out = residual + shortcut_connection
         if args.print_shapes:
-            print('x + shortcut:', list(out.shape))
+            print('x + shortcut:', list(pre_act_out.shape))
 
-        out = self.relu(out)
+        out = self.relu(pre_act_out)
 
         return out
 

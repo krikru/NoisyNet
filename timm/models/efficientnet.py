@@ -633,7 +633,7 @@ class DepthwiseSeparableConv(nn.Module):
         return self.conv_pw.in_channels
 
     def forward(self, x):
-        residual = x
+        shortcut_connection = x
 
         x = self.conv_dw(x)
         x = self.bn1(x)
@@ -649,7 +649,7 @@ class DepthwiseSeparableConv(nn.Module):
         if self.has_residual:
             if self.drop_connect_rate > 0.:
                 x = drop_connect(x, self.training, self.drop_connect_rate)
-            x += residual
+            x += shortcut_connection
         return x
 
 
@@ -702,7 +702,7 @@ class InvertedResidual(nn.Module):
         return self.conv_pwl.in_channels
 
     def forward(self, x):
-        residual = x
+        shortcut_connection = x
 
         # Point-wise expansion
         x = self.conv_pw(x)
@@ -725,7 +725,7 @@ class InvertedResidual(nn.Module):
         if self.has_residual:
             if self.drop_connect_rate > 0.:
                 x = drop_connect(x, self.training, self.drop_connect_rate)
-            x += residual
+            x += shortcut_connection
 
         return x
 
@@ -752,7 +752,7 @@ class CondConvResidual(InvertedResidual):
         self.routing_fn = nn.Linear(in_chs, self.num_experts)
 
     def forward(self, x):
-        residual = x
+        shortcut_connection = x
 
         # CondConv routing
         pooled_inputs = F.adaptive_avg_pool2d(x, 1).flatten(1)
@@ -779,7 +779,7 @@ class CondConvResidual(InvertedResidual):
         if self.has_residual:
             if self.drop_connect_rate > 0.:
                 x = drop_connect(x, self.training, self.drop_connect_rate)
-            x += residual
+            x += shortcut_connection
         return x
 
 
@@ -827,7 +827,7 @@ class EdgeResidual(nn.Module):
         return self.conv_pwl.in_channels
 
     def forward(self, x):
-        residual = x
+        shortcut_connection = x
 
         # Expansion convolution
         x = self.conv_exp(x)
@@ -845,7 +845,7 @@ class EdgeResidual(nn.Module):
         if self.has_residual:
             if self.drop_connect_rate > 0.:
                 x = drop_connect(x, self.training, self.drop_connect_rate)
-            x += residual
+            x += shortcut_connection
 
         return x
 
